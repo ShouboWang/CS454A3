@@ -27,6 +27,38 @@ int rpc_sock_port;
 
 int rpcrpcInit()
 {
+	// Create socket for client
+  struct addrinfo rpc_hints, *rpc_ai;	// Address info
+
+  // Set the address info
+  memset(&rpc_hints, 0, sizeof rpc_hints);
+  hints.ai_family = AF_UNSPEC;
+  hints.ai_socktype = SOCK_STREAM;
+  hints.ai_flags = AI_PASSIVE;
+
+  // Get address info
+  getaddrinfo(NULL, "0", &rpc_hints, &rpc_ai);
+	rpc_sock = socket(rpc_ai->ai_family, rpc_ai->ai_socktype, rpc_ai->ai_protocol);
+	bind(rpc_sock, rpc_ai->ai_addr, rpc_ai->ai_addrlen);
+
+	// start listening
+	listen(rpc_sock, RPC_BACKLOG);
+
+	// Store rpc info
+	struct sockaddr_in sock_addr;
+	socklen_t sock_addr_len = sizeof sock_addr;
+
+	// Get rpc sock name
+	rpc_socket_id = new char[128];
+	getnameinfo((struct sockaddr*)&sock_addr, &lengths, rpc_socket_id, 128, NULL, 0, 0);
+
+	// Get the rpc dock port
+  getsockname(rpc_sock, (struct sockaddr* ) &sock_addr, &sock_addr_len);
+	rpc_sock_port = ntohs(sock_addr.sin_port);
+
+  // Address info is no longer needed
+  freeaddrinfo(rpc_ai);
+
 	// Connect to binder
 	// Get Binder's address & port
 	char* binder_address = getenv(BINDER_ADDRESS_S);
@@ -56,39 +88,6 @@ int rpcrpcInit()
 
 	// free address info
 	freeaddrinfo(binder_ai);
-
-	// Create socket for client
-  struct addrinfo rpc_hints, *rpc_ai;	// Address info
-
-  // Set the address info
-  memset(&rpc_hints, 0, sizeof rpc_hints);
-  hints.ai_family = AF_UNSPEC;
-  hints.ai_socktype = SOCK_STREAM;
-  hints.ai_flags = AI_PASSIVE;
-
-  // Get address info
-  getaddrinfo(NULL, "0", &rpc_hints, &rpc_ai);
-	rpc_sock = socket(rpc_ai->ai_family, rpc_ai->ai_socktype, rpc_ai->ai_protocol);
-	bind(rpc_sock, rpc_ai->ai_addr, rpc_ai->ai_addrlen);
-
-	// start listening
-	listen(rpc_sock, RPC_BACKLOG);
-
-	// Store rpc info
-	struct sockaddr_in sock_addr;
-	socklen_t sock_addr_len = sizeof sock_addr;
-
-	// Get rpc sock name
-  //getsockname(binder_socket, sizeof rpc_socket_id);
-	rpc_socket_id = new char[128];
-	getnameinfo((struct sockaddr*)&sock_addr, &lengths, rpc_socket_id, 128, NULL, 0, 0);
-
-	// Get the rpc dock port
-  getsockname(rpc_sock, (struct sockaddr* ) &sock_addr, &sock_addr_len);
-	rpc_sock_port = ntohs(sock_addr.sin_port);
-
-  // Address info is no longer needed
-  freeaddrinfo(rpc_ai);
 
 	return SUCCESS;
 }
