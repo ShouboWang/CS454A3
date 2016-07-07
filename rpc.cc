@@ -37,7 +37,7 @@ int rpcrpcInit()
   hints.ai_flags = AI_PASSIVE;
 
   // Get address info
-  getaddrinfo(NULL, "0", &rpc_hints, &rpc_ai);
+	getaddrinfo(NULL, "0", &rpc_hints, &rpc_ai);
 	rpc_sock = socket(rpc_ai->ai_family, rpc_ai->ai_socktype, rpc_ai->ai_protocol);
 	bind(rpc_sock, rpc_ai->ai_addr, rpc_ai->ai_addrlen);
 
