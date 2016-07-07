@@ -11,12 +11,9 @@
 #include <unistd.h>
 #include <map>
 #include <vector>
+#include "common.h"
 #include "rpc.h"
 #include "binder.h"
-
-#define REGISTER 4
-#define LOC_REQUEST 5
-#define TERMINATE 6
 
 using namespace std;
 
@@ -113,7 +110,7 @@ void handleRequest(int clientSocketFd, fd_set *masterFds) {
         FD_CLR(clientSocketFd, masterFds);
         return;
     }
-    int msgType;
+    MessageType msgType;
     bytes = read(clientSocketFd, &msgType, 4);
     if (bytes == 0) {
         close(clientSocketFd);
