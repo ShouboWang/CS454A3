@@ -109,5 +109,10 @@ int rpcExecute()
 }
 int rpcTerminate()
 {
-	return 0;
+	// call binder to inform servcers to terminate
+
+
+	// terminate binder
+	close(binder_socket);
+	return SUCCESS;
 }

@@ -15,3 +15,6 @@
 // Failure
 #define ERROR_BINDER_ADDRESS_NOT_FOUND -1
 #define ERROR_BINDER_PORT_NOT_FOUND -2
+
+// RPC Binder communication
+#define TERMINATION_MSG "Terminate_Binder_Sig"
