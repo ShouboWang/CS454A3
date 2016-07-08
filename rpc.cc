@@ -15,6 +15,21 @@
 #include <arpa/inet.h>
 #include <sys/wait.h>
 #include <signal.h>
+#include <map>
+
+// Structs
+struct serverFuncKey {
+	char* _name;
+	int* _argTypes;
+
+	void serverFuncKey(char* name, int* argTypes)
+	{
+		_name = name;
+		_argTypes = argTypes;
+	}
+};
+
+bool operator < (const serverFuncKey& key1, const serverFuncKey& key2);
 
 // Binder socket file descriptor
 int binder_socket_fd;
@@ -24,6 +39,8 @@ char rpc_socket_id;
 int rpc_sock_fd;
 int rpc_sock_port;
 
+// Map
+map<serverFuncKey, skeleton> server_functions;
 
 int rpcrpcInit()
 {
@@ -79,7 +96,80 @@ int rpcCacheCall(char* name, int* argTypes, void** args)
 }
 int rpcRegister(char* name, int* argTypes, skeleton f)
 {
-	return 0;
+
+	// Calls the binder, informing it that a server procedure with the
+	// indicated name and list of argument types is available at this server
+	if(binder_socket_fd < 0)
+		return REGISTER_BINDER_DID_NOT_INITIATE;
+
+	// Generate the msg
+	// Get the local host name & port number
+	char host_name[DEFAULT_CHAR_ARR_SIZE];
+	gethostname(host_name, DEFAULT_CHAR_ARR_SIZE);
+
+	struct sockaddr_in sock_ai;
+	socklen_t sock_len = sizeof(sock_ai);
+	getsockname(rpc_sock_fd, (struct sockaddr *)&sock_ai, &sock_len);
+	unsigned short host_port = ntohs(sock_ai.sin_port);
+
+	// Generate the data
+	// The format will be:
+	// char(server_id'\0')int(port)char(function_name'\0')int_arr(arg_types)
+	int host_name_length = sizeof(host_name)/sizeof(char);
+	int func_name_length = sizeof(name)/sizeof(char);
+	int arg_types_length = 0;
+	while(argTypes[arg_types_length])
+		arg_types_length++;
+
+	int msg_length =  host_name_length + func_name_length + 4 + arg_types_length * 4;
+	char msg[msg_length];
+	int cur_index = 0;
+	// Add host_name'\0'
+	memcpy(msg, host_name, host_name_length);
+	cur_index += host_name_length;
+	memcpy(msg + cur_index, &TERMINATING_CHAR, sizeof(char));
+	cur_index += sizeof(char);
+
+	// Add port
+	memcpy(msg + cur_index, &host_port, sizeof(unsigned short));
+	cur_index += sizeof(unsigned short);
+
+	// Add function_name'\0'
+	memcpy(msg + cur_index, &name, func_name_length);
+	cur_index += func_name_length;
+	memcpy(msg + cur_index, &TERMINATING_CHAR, sizeof(char));
+	cur_index += sizeof(char);
+
+	for(int i = 0; i < arg_types_length; i++)
+	{
+		memcpy(msg + cur_index, &argTypes[i], sizeof(int));
+		cur_index += sizeof(int);
+	}
+
+	// Send the message
+	int status_code = sendMessgae(binder_socket_fd, msg_length, MessageType.REGISTER, msg);
+	if(status_code != SUCCESS)
+		return status_code;
+
+	// The first recieve is the REGISTER_SUCCESS / REGISTER_FAILURE
+	int binder_message_type_int = recieveMessage_int(binder_socket_fd);
+	MessageType binder_message_type = static_cast<MessageType>(binder_message_type_int);
+
+	// The second recieve is the additional status code
+	int binder_status_code = recieveMessage_int(binder_socket_fd);
+
+	if(binder_message_type == MessageType.REGISTER_SUCCESS)
+	{
+		// If the binder register is successful, add the skeleton to map
+		struct serverFuncKey key(name, argTypes);
+		serverFuncKey[key] = f;
+		return binder_status_code;
+	} else if(binder_message_type == MessageType.REGISTER_FAILURE)
+		return binder_status_code;
+	else
+		return REGISTER_BINDER_RET_UNRECON_TYPE;
+
+	return SUCCESS;
 }
 int rpcExecute()
 {
@@ -149,10 +239,10 @@ int binderConnection()
 * returns SUCCESS is execution did not encounter error
 * else return the error status code
 */
-int sendMessgae(int socket_fd, unsigned int msg_len, MessageType msg_type, char msg_data[])
+int sendMessage(int socket_fd, unsigned int msg_len, MessageType msg_type, char msg_data[])
 {
     // Format of the data is
-    // msg_length(int)type(int)msg(char)
+    // int(msg_length)MessageType(type)char(msg)
     // so the total would be 4 byte + 4 byte + msg_len
     int data_len = msg_len + 8;
     char data[data_len];
@@ -179,4 +269,35 @@ int sendMessgae(int socket_fd, unsigned int msg_len, MessageType msg_type, char 
 		}
 
 		return SUCCESS;
+}
+
+int recieveMessage_int(int socket_fd)
+{
+	// Used to recieve status code from socket_fd
+	// a 4 byte interget status code
+	char ret[4];
+	int rev_status_code = recieve_msg(socket_fd, 4, ret);
+	if(rev_status_code != SUCCESS)
+	 	return rev_status_code;
+
+	// Convert the value to int
+	return atoi(ret);
+}
+
+int recieve_msg(int socket_fd, int expect_len; char buf[])
+{
+	// Reads until expect_len is reached
+	char* ptr = buf;
+	while(expect_len > 0) {
+		int rcv_len = recv(socket_fd, ptr, expect_len, 0);
+		if(rcv_len == 0)
+			break;
+		else if(rcv_len < 0)
+			return RECEIVE_ERROR;
+
+		expect_len -= rcv_len;
+		ptr += rcv_len;
+	}
+
+	return SUCCESS;
 }

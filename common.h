@@ -5,10 +5,14 @@
 #define RPC_BACKLOG 5
 #define INT_BYTE_PADDING 4
 #define SOCKET_DATA_CHUNK_SIZE 16
+#define DEFAULT_CHAR_ARR_SIZE 128
 
 // Const string define
 #define BINDER_ADDRESS_S "BINDER_ADDRESS"
 #define BINDER_PORT_S "BINDER_PORT"
+
+// Const char define
+#define TERMINATING_CHAR '\0'
 
 enum MessageType {
     TERMINATE = 0,
@@ -40,6 +44,11 @@ enum ReasonCode {
 #define INIT_BINDER_SOCKET_BIND_FAILURE -4
 #define INIT_LOCAL_SOCKET_OPEN_FAILURE -5
 #define INIT_LOCAL_SOCKET_BIND_FAILURE -6
+
+#define REGISTER_BINDER_DID_NOT_INITIATE -7
+#define REGISTER_BINDER_RET_UNRECON_TYPE -8
+
+#define RECEIVE_ERROR -8
 
 
 // Warning
