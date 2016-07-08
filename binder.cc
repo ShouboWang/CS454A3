@@ -14,6 +14,7 @@
 #include "common.h"
 #include "rpc.h"
 #include "binder.h"
+#include "message.h"
 
 using namespace std;
 

@@ -53,3 +53,5 @@ enum ReasonCode {
 
 // Warning
 #define TERMINATE_BINDER_DID_NOT_INITIATE 1
+
+#endif
