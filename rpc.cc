@@ -164,12 +164,11 @@ int rpcRegister(char* name, int* argTypes, skeleton f)
 		struct serverFuncKey key(name, argTypes);
 		serverFuncKey[key] = f;
 		return binder_status_code;
-	} else if(binder_message_type == MessageType.REGISTER_FAILURE)
+	} else if(binder_message_type == MessageType.REGISTER_FAILURE){
 		return binder_status_code;
-	else
-		return REGISTER_BINDER_RET_UNRECON_TYPE;
+	}
 
-	return SUCCESS;
+	return REGISTER_BINDER_RET_UNRECON_TYPE;
 }
 int rpcExecute()
 {
