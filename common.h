@@ -14,23 +14,28 @@
 // Const char define
 #define TERMINATING_CHAR '\0'
 
+
+#define INT_SIZE 4
+#define CHAR_ARR_SIZE 128
+
 enum MessageType {
     TERMINATE = 0,
     REGISTER = 1,
     REGISTER_SUCCESS = 2,
     REGISTER_FAILURE = 3,
     LOC_REQUEST = 4,
-    LOC_REQUEST_SUCCESS = 5,
-    LOC_REQUEST_FAILURE = 6,
+    LOC_SUCCESS = 5,
+    LOC_FAILURE = 6,
     EXECUTE = 7,
     EXECUTE_SUCCESS = 8,
     EXECUTE_FAILURE = 9
 };
 
 enum ReasonCode {
-    SUCCESS = 0,
+    REQUEST_SUCCESS = 0,
     FUNCTION_NOT_FOUND = 1,
     FUNCTION_OVERRIDDEN = 2,
+    MESSAGE_CORRUPTED = 3
 };
 
 // Return values
@@ -67,3 +72,5 @@ enum ReasonCode {
 
 // Warning
 #define TERMINATE_BINDER_DID_NOT_INITIATE 1
+
+#endif
