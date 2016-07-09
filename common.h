@@ -14,6 +14,10 @@
 // Const char define
 #define TERMINATING_CHAR '\0'
 
+
+#define INT_SIZE 4
+#define CHAR_ARR_SIZE 128
+
 enum MessageType {
     TERMINATE = 0,
     REGISTER = 1,
@@ -28,9 +32,10 @@ enum MessageType {
 };
 
 enum ReasonCode {
-    SUCCESS = 0,
+    REQUEST_SUCCESS = 0,
     FUNCTION_NOT_FOUND = 1,
     FUNCTION_OVERRIDDEN = 2,
+    MESSAGE_CORRUPTED = 3
 };
 
 // Return values

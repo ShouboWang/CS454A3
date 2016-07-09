@@ -95,6 +95,40 @@ int registerFunc(string name, int* argTypes, int argSize, string serverId, int p
 
 
 void handleRegisterRequest(int clientSocketFd, int msgLength) {
+    char buffer[msgLength];
+    ReasonCode reason;
+    char responseMsg [INT_SIZE];
+    int status = receiveMessage(clientSocketFd, msgLength, buffer);
+    if (status == RECEIVE_ERROR) {
+        // corrupt message
+        reason = MESSAGE_CORRUPTED;
+        memcpy(responseMsg, &reason, INT_SIZE);
+        sendMessage(clientSocketFd, 3 * INT_SIZE, REGISTER_SUCCESS, responseMsg);
+        return;
+    }
+
+    char server[CHAR_ARR_SIZE];
+    int port;
+    char funcName[CHAR_ARR_SIZE];
+    int argSize = ((msgLength - 2 * CHAR_ARR_SIZE) / INT_SIZE) - 1;
+    int argTypes [argSize];
+
+    memcpy(server, buffer, CHAR_ARR_SIZE);
+    memcpy(&port, buffer + CHAR_ARR_SIZE, INT_SIZE);
+    memcpy(funcName, buffer + CHAR_ARR_SIZE + INT_SIZE, CHAR_ARR_SIZE);
+    memcpy(argTypes, buffer + 2 * CHAR_ARR_SIZE + INT_SIZE, argSize);
+
+    string name(funcName);
+    string serverId(server);
+
+    status = registerFunc(name, argTypes, argSize, serverId, port);
+    if (status == 1) {
+        reason = FUNCTION_OVERRIDDEN;
+    } else {
+        reason = REQUEST_SUCCESS;
+    }
+    memcpy(responseMsg, &reason, INT_SIZE);
+    sendMessage(clientSocketFd, 3 * INT_SIZE, REGISTER_SUCCESS, responseMsg);
 }
 
 void handleLocationRequest(int clientSocketFd, int msgLength) {
@@ -120,9 +154,9 @@ void handleRequest(int clientSocketFd, fd_set *masterFds) {
     }
 
     if (msgType == REGISTER) {
-        handleRegisterRequest(clientSocketFd, msgLength);
+        handleRegisterRequest(clientSocketFd, msgLength - 2*INT_BYTE_PADDING);
     } else if (msgType == LOC_REQUEST) {
-        handleLocationRequest(clientSocketFd, msgLength);
+        handleLocationRequest(clientSocketFd, msgLength - 2*INT_BYTE_PADDING);
     } else if (msgType == TERMINATE) {
         handleTerminateRequest();
     }

@@ -41,7 +41,7 @@ int sendMessage(int socket_fd, unsigned int msg_len, MessageType msg_type, char 
 }
 
 
-int recieveMessage(int socket_fd, int expect_len, char buf[])
+int receiveMessage(int socket_fd, int expect_len, char buf[])
 {
 	// Reads until expect_len is reached
 	char* ptr = buf;
