@@ -46,13 +46,15 @@ bool operator == (const FuncSignature &l, const FuncSignature &r) {
 struct ServerLoc {
     string serverId;
     int port;
-    ServerLoc(string serverId, int port) : serverId(serverId), port(port) {}
+    int socketFd;
+    ServerLoc(string serverId, int port, int socketFd) : serverId(serverId), port(port), socketFd(socketFd) {}
 };
 
 bool operator == (const ServerLoc &l, const ServerLoc &r) {
-    return l.serverId == r.serverId && l.port == r.port;
+    return l.serverId == r.serverId && l.port == r.port && l.socketFd == r.socketFd;
 }
 
+bool terminating;
 map <FuncSignature*, vector<ServerLoc *> > funcDict;
 vector<ServerLoc *> serverQueue;
 
@@ -66,9 +68,9 @@ void registerServer(ServerLoc* location) {
     serverQueue.push_back(location);
 }
 
-int registerFunc(string name, int* argTypes, int argSize, string serverId, int port) {
+int registerFunc(string name, int* argTypes, int argSize, string serverId, int port, int socketFd) {
     bool found = false;
-    ServerLoc *location = new ServerLoc(serverId, port);
+    ServerLoc *location = new ServerLoc(serverId, port, socketFd);
     FuncSignature *func = new FuncSignature(name, argTypes, argSize);
 
     // Look up function in the dictionary
@@ -122,7 +124,7 @@ void handleRegisterRequest(int clientSocketFd, int msgLength) {
     string name(funcName);
     string serverId(server);
 
-    status = registerFunc(name, argTypes, argSize, serverId, port);
+    status = registerFunc(name, argTypes, argSize, serverId, port, clientSocketFd);
     if (status == 1) {
         reason = FUNCTION_OVERRIDDEN;
     } else {
@@ -199,21 +201,73 @@ void handleLocationRequest(int clientSocketFd, int msgLength) {
 }
 
 void handleTerminateRequest() {
+    // terminate and clean up
+    for (int i = 0; i < serverQueue.size(); i++) {
+        sendMessage(serverQueue[i]->socketFd, 2 * INT_SIZE, TERMINATE, NULL);
+    }
+    terminating = true;
 }
+
+void removeServer(int closingSocketFd) {
+    for (int i = 0; i < serverQueue.size(); i++) {
+        if (serverQueue[i]->socketFd == closingSocketFd) {
+            delete serverQueue[i];
+            serverQueue.erase(serverQueue.begin() + i);
+        }
+    }
+    for (map<FuncSignature *, vector<ServerLoc *> >::iterator it = funcDict.begin(); it != funcDict.end(); it++) {
+        vector<ServerLoc *> servers = it->second;
+        for (vector<ServerLoc *>::iterator it2 = servers.begin(); it2 != servers.end(); it2++) {
+            if (closingSocketFd == (*it2)->socketFd) {
+                delete *it2;
+                servers.erase(it2);
+                break;
+            }
+        }
+    }
+}
+
+void cleanup() {
+    for (int i = 0; i < serverQueue.size(); i++) {
+        delete serverQueue[i];
+    }
+    serverQueue.clear();
+
+    for (map<FuncSignature *, vector<ServerLoc *> >::iterator it = funcDict.begin(); it != funcDict.end(); it ++) {
+        delete it->first;
+        vector<ServerLoc *> v = it->second;
+        for (std::vector<ServerLoc *>::iterator v_it = v.begin() ; v_it != v.end(); v_it++) {
+            delete *v_it;
+        }
+        v.clear();
+    }
+    funcDict.clear();
+}
+
 
 void handleRequest(int clientSocketFd, fd_set *masterFds) {
     int msgLength;
     int bytes = read(clientSocketFd, &msgLength, 4);
-    if (bytes == 0) {
+    if (bytes <= 0) {
         close(clientSocketFd);
         FD_CLR(clientSocketFd, masterFds);
+        removeServer(clientSocketFd);
+        if (serverQueue.size() == 0 && terminating) {
+            cleanup();
+            exit(0);
+        }
         return;
     }
     MessageType msgType;
     bytes = read(clientSocketFd, &msgType, 4);
-    if (bytes == 0) {
+    if (bytes <= 0) {
         close(clientSocketFd);
         FD_CLR(clientSocketFd, masterFds);
+        removeServer(clientSocketFd);
+        if (serverQueue.size() == 0 && terminating) {
+            cleanup();
+            exit(0);
+        }
         return;
     }
 
@@ -224,23 +278,10 @@ void handleRequest(int clientSocketFd, fd_set *masterFds) {
     } else if (msgType == TERMINATE) {
         handleTerminateRequest();
     }
-    /*
-    char buffer [buffer_size];
-    bytes = read(i, &buffer[0], buffer_size);
-    if (bytes == 0) {
-        close(i);
-        FD_CLR(i, &masterFds);
-        continue;
-    }
-    capitalize(buffer, buffer_size);
-    char res [buffer_size + 4];
-    memcpy(&res[0], &buffer_size, 4);
-    memcpy(&res[4], &buffer[0], buffer_size);
-    write(i, res, buffer_size + 4);
-    */
 }
 
 int main() {
+    terminating = false;
     int socketFd, fdmax;
     struct sockaddr_in svrAddr, clntAddr;
     fd_set masterFds;
@@ -307,27 +348,6 @@ int main() {
                 } else {
                     int clientSocketFd = i;
                     handleRequest(clientSocketFd, &masterFds);
-                    /*
-                    int buffer_size;
-                    int bytes = read(i, &buffer_size, 4);
-                    if (bytes == 0) {
-                        close(i);
-                        FD_CLR(i, &masterFds);
-                        continue;
-                    }
-                    char buffer [buffer_size];
-                    bytes = read(i, &buffer[0], buffer_size);
-                    if (bytes == 0) {
-                        close(i);
-                        FD_CLR(i, &masterFds);
-                        continue;
-                    }
-                    capitalize(buffer, buffer_size);
-                    char res [buffer_size + 4];
-                    memcpy(&res[0], &buffer_size, 4);
-                    memcpy(&res[4], &buffer[0], buffer_size);
-                    write(i, res, buffer_size + 4);
-                    */
                 }
             }
         }
