@@ -39,6 +39,18 @@ char rpc_socket_id;
 int rpc_sock_fd;
 int rpc_sock_port;
 
+bool terminate;
+
+int thread_count;
+pthread_mutex_t thread_count_lock;
+
+void alt_thread_count(int count)
+{
+	pthread_mutex_lock(&thread_count_lock);
+	thread_count += count;
+	pthread_mutex_unlock(&thread_count_lock);
+}
+
 // Map
 map<serverFuncKey, skeleton> server_functions;
 
@@ -237,10 +249,12 @@ int rpcCall(char* name, int* argTypes, void** args)
 		return UNKNOW_MSG_TYPE_RESPONSE;
 	}
 }
+
 int rpcCacheCall(char* name, int* argTypes, void** args)
 {
 	return 0;
 }
+
 int rpcRegister(char* name, int* argTypes, skeleton f)
 {
 
@@ -367,8 +381,15 @@ int rpcExecute()
 	// keep track of the biggest file descriptor
 	fdmax = listener;
 
+	pthread_t terminate_listener;
+
+	// listen for binder termination
+	terminate = false;
+	pthread_create(&terminate_listener, NULL, wait_terminate, NULL);
+
+
 	// Server main loop
-	for(;;) {
+	while(!terminate) {
 		// copy master
 		read_fds = master;
 		if (select(fdmax+1, &read_fds, NULL, NULL, NULL) < 0)
@@ -388,29 +409,25 @@ int rpcExecute()
 							if (newfd > fdmax)         // keep track of the max
 								fdmax = newfd;
 		        } else {
-		            // handle data from a client
-		            int msg_length = 0;
-		            if (recv(index, &msg_length, sizeof(msg_length), 0) < 1) {
-		                // If length is 0, then the connection is closed by the client
-		                // If length is < 0, then there was an error in tramission
-		                close(index);
-		                FD_CLR(index, &master); // remove from master set
-		            } else {
-		                char buf[msg_length];
-		                recv(index, buf, msg_length, 0);
-		                std::string upper = to_cap(buf, msg_length);
-		                printf("Recieved from client %i: %s\n", index, buf);
-		                printf("SENDING TO client %i: %s\n", index, upper.c_str());
-		                if (send(index, upper.c_str(), upper.length(), 0) == -1)
-		                    perror("send");
-		            }
+								// Create a new thread to handle the client's request so that it
+								// wont be blocking
+								pthread_t client_thread;
+								alt_thread_count(1);
+								pthread_create(&client_thread, NULL, client_request_handler, (void*) &index);
 		        }
 		    }
 		}
 	}
 
-	return 0;
+	while(thread_count < 0){}
+
+	int msg_type = reasonCode.REQUEST_SUCCESS;
+	send(binder_socket_fd, &msg_type, sizeof(MessageType), 0);
+	close(binder_socket_fd);
+
+	return msg_type;
 }
+
 int rpcTerminate()
 {
 	// call binder to inform servcers to terminate
@@ -468,6 +485,112 @@ int binderConnection()
 		return INIT_BINDER_SOCKET_BIND_FAILURE;
 
 	return SUCCESS;
+}
+
+// Wait for binder to sent terminate signal
+void* wait_terminate(void* arg)
+{
+	// Format TERMINATE
+	for(;;){
+		int msg_type;
+		recv(binder_socket_fd, &msg_type, sizeof(MessageType), 0);
+		if(msg_type == MessageType.TERMINATE)
+		{
+			terminate = true;
+			pthread_exit(NULL);
+		}
+	}
+}
+
+void* client_request_handler(void* arg)
+{
+	// Increase the thread count
+	alt_thread_count(1);
+
+	int client_fd = *(int*) arg;
+	int msg_type;
+	int msg_length;
+	int function_name[DEFAULT_CHAR_ARR_SIZE];
+
+	recv(client_fd, &msg_length, sizeof(int), 0);
+	recv(client_fd, &msg_type, sizeof(MessageType), 0);
+
+	//func_name_length + 1 + arg_types_length * 4 + arg_size;
+	// Get the function name
+	recv(client_fd, function_name, DEFAULT_CHAR_ARR_SIZE, 0);
+
+	int arg_size_tot = msg_length - DEFAULT_CHAR_ARR_SIZE;
+	int *client_args = (int*) malloc(arg_size_tot);
+	recv(client_fd, client_args, arg_size_tot, MSG_WAITALL);
+
+	// Get the number of args
+	int arg_types_length = get_arg_length(client_args);
+
+	int *arg_types = (int*) malloc(arg_types_length * 4);
+	void** args = (void**) malloc(arg_types_length * sizeof(void*));
+	void* args_index = client_args + arg_types_length;
+
+	for (int index = 0; index < arg_types_length; index++)
+    {
+        //see what type/len of arg we're dealing with
+        int arg_type = get_arg_type(argTypes[index]);
+        int arg_type_size = size_of_type(arg_type);
+        int arr_size = get_arg_length(argTypes[index]);
+
+        //temp holder
+        void* args_holder = (void*) malloc(arr_size * arg_type_size);
+
+        //copy the address
+        *(args[index]) = args_holder;
+
+        //copy the contents of array into temp holder
+        for (int j = 0; j < arr_size; j++)
+        {
+            void* temp = (char*) args_holder + j * arg_type_size;
+            memcpy(temp, argsIndex, arg_type_size);
+            argsIndex = (void*) ((char*) argsIndex + arg_type_size);
+        }
+    }
+
+		int result = MessageType.EXECUTE_FAILURE;
+		skeleton s = server_functions[serverFuncKey(function_name, arg_types)];
+		if(s != NULL) {
+			result = s(arg_types, args);
+		}
+
+		if(result == MessageType.EXECUTE_SUCCESS)
+		{
+			int ret_msg_type = MessageType.EXECUTE_SUCCESS;
+			send(client_fd, &msg_len, sizeof(int), 0);
+			send(client_fd, &ret_msg_type, sizeof(MessageType), 0);
+			send(client_fd, function_name, sizeof(function_name), 0);
+			send(client_fd, arg_types, arg_types_length * 4, 0);
+
+			for(int arg = 0; arg < arg_types_length; arg++)
+			{
+				int arg_type = get_arg_type(argTypes[args]);
+				int arg_length = get_arg_length(argTypes[args]);
+				int arg_size = size_of_type(arg_type);
+				send(client_fd, (void*) args[arg], arg_length * arg_size, 0);
+			}
+
+		} else
+		{
+			// EXECUTE_FAILURE, reasonCode
+			int ret_msg_type = MessageType.EXECUTE_FAILURE;
+			int ret_msg_length = sizeof(int);
+			send(client_fd, &ret_msg_length, sizeof(int), 0);
+			send(client_fd, &ret_msg_type, sizeof(MessageType), 0);
+			send(client_fd, &result, sizeof(int), 0);
+		}
+
+		close(client_fd);
+		free(args);
+		free(arg_types);
+		free(client_args);
+
+		alt_thread_count(-1);
+		pthread_exit();
 }
 
 /*
