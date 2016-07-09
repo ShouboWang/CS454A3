@@ -175,7 +175,7 @@ int main() {
     char server_name [128];
     getsockname(socketFd, (struct sockaddr *)&svrAddr, &size);
     gethostname(server_name, 128);
-    
+
     cout << "BINDER_ADDRESS " << server_name << endl;
     cout << "BINDER_PORT " << ntohs(svrAddr.sin_port) << endl;
 
@@ -236,4 +236,3 @@ int main() {
 
 
 }
-

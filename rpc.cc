@@ -42,6 +42,23 @@ int rpc_sock_port;
 // Map
 map<serverFuncKey, skeleton> server_functions;
 
+int size_of_type(int type)
+{
+	if(type == ARG_CHAR)
+		return sizeof(char);
+	else if(type == ARG_SHORT)
+		return sizeof(short);
+	else if(type == ARG_INT)
+		return sizeof(int);
+	else if(type == ARG_LONG)
+		return sizeof(long);
+	else if(type == ARG_DOUBLE)
+		return sizeof(double);
+	else if(type == ARG_FLOAT)
+		return sizeof(float);
+	return -1;
+}
+
 int rpcrpcInit()
 {
 	// Create socket for client
@@ -86,9 +103,139 @@ int rpcrpcInit()
 		return binder_status_code;
 	return SUCCESS;
 }
+
+// Called by client
 int rpcCall(char* name, int* argTypes, void** args)
 {
-	return 0;
+
+	// Connect to binder
+	// Get Binder's address & port
+	char* binder_address = getenv(BINDER_ADDRESS_S);
+	char* binder_port = getenv(BINDER_PORT_S);
+
+	// Validates that the address and port is set
+	if(binder_address == NULL)
+		return CALL_BINDER_ADDRESS_NOT_FOUND;
+	else if(binder_port == NULL)
+		return CALL_BINDER_PORT_NOT_FOUND;
+
+	binder = socket_connect(binder_address, binder_port);
+
+	// Make the msg
+	// string(name'\0')int(argTypes)
+	int func_name_length = string(name).size();
+	int arg_types_length = 0;
+	while(argTypes[arg_types_length])
+		arg_types_length++;
+
+	int msg_length = func_name_length + 1 + arg_types_length * 4;
+	char msg[msg_length];
+
+	// Sent the length & type
+	send(binder, &msg_length, sizeof(int), 0);
+	send(binder, &MessageType.LOC_REQUEST, sizeof(MessageType), 0);
+
+	// Send the msg
+	send(binder, name, func_name_length, 0);
+	send(binder, TERMINATING_CHAR, sizeof(char), 0);
+	send(binder, argTypes, arg_types_length * sizeof(int), 0);
+
+	// Recieve the response type
+	int res_type;
+	recv(binder, &res_type, sizeof(MessageType), 0);
+
+	char server_address[DEFAULT_CHAR_ARR_SIZE];
+	char server_port[DEFAULT_CHAR_ARR_SIZE];
+	if(res_type == MessageType.LOC_REQUEST_SUCCESS)
+	{
+		// successful response, get the address and port
+		recv(binder, server_address, DEFAULT_CHAR_ARR_SIZE, 0);
+		recv(binder, server_port, DEFAULT_CHAR_ARR_SIZE, 0);
+	} else if (res_type == MessageType.LOC_REQUEST_FAILURE)
+	{
+		// If failure, get the reason code and return it
+		int reason;
+		recv(binder, &reason, sizeof(int), 0);
+		close(binder);
+		return reason;
+	} else
+	{
+		close(binder);
+		return UNKNOW_MSG_TYPE_RESPONSE;
+	}
+
+	// sent to server and to EXECUTE
+	// Connection
+	int server_fd = socket_connect(server_address, server_port);
+
+	// Get the size
+	int arg_size = 0;
+	for(int arg = 0; arg < arg_types_length; arg++)
+	{
+		// For each arg
+		int arg_type = get_arg_type(argTypes[arg]);
+
+		int type_length = get_arg_length(argTypes[arg])
+		int type_size = size_of_type(arg_type);
+
+		arg_size += type_size * type_length;
+	}
+
+	msg_length = func_name_length + 1 + arg_types_length * 4 + arg_size;
+
+	// Send the message to server
+	// Message type and length
+	send(server_fd, &msg_length, sizeof(int), 0);
+	send(server_fd, MessageType.EXECUTE, sizeof(MessageType), 0);
+
+	// function name and signiture
+	send(server_fd, name, func_name_length, 0);
+	send(server_fd, TERMINATING_CHAR, sizeof(char), 0);
+	send(server_fd, argTypes, arg_types_length * 4, 0);
+
+	// Send each arg
+	for(int arg = 0; arg < arg_types_length; arg++)
+	{
+		int arg_type = get_arg_type(argTypes[args]);
+		int arg_length = get_arg_length(argTypes[args]);
+		int arg_size = size_of_type(arg_type);
+		send(server_fd, (void*) args[arg], arg_length * arg_size, 0);
+	}
+
+	// Server response
+	// Possible responses:
+	// EXECUTE_SUCCESS, name, argTypes, args
+	// EXECUTE_FAILURE, reasonCode
+	int recv_msg_length;
+	int recv_msg_type;
+	recv(server_fd, &recv_msg_length, sizeof(int), 0);
+	recv(server_fd, &recv_msg_type, sizeof(MessageType), 0);
+
+	if(recv_msg_type == MessageType.EXECUTE_SUCCESS)
+	{
+		char function_name[DEFAULT_CHAR_ARR_SIZE];
+		recv(server_fd, function_name, DEFAULT_CHAR_ARR_SIZE, 0);
+		recv(server_fd, argTypes, arg_types_length * 4, 0);
+
+		for (int arg = 0; arg < arg_types_length - 1; arg++) //for each argument
+		{
+			int arg_type = get_arg_type(argTypes[arg]);
+			int arg_length = get_arg_length(argTypes[arg]);
+			int arg_size = size_of_type(arg_type);
+
+			recv(server_fd, args[arg], arg_length * arg_size, 0);
+		}
+	} else if (recv_msg_type == MessageType.EXECUTE_FAILURE)
+	{
+			int reasonCode;
+			recv(server_fd, &reasonCode, sizeof(int), 0);
+			close(server_fd);
+			return reasonCode;
+	} else
+	{
+		close(server_fd);
+		return UNKNOW_MSG_TYPE_RESPONSE;
+	}
 }
 int rpcCacheCall(char* name, int* argTypes, void** args)
 {
@@ -116,7 +263,7 @@ int rpcRegister(char* name, int* argTypes, skeleton f)
 	// The format will be:
 	// char(server_id'\0')int(port)char(function_name'\0')int_arr(arg_types)
 	int host_name_length = sizeof(host_name)/sizeof(char);
-	int func_name_length = sizeof(name)/sizeof(char);
+	int func_name_length = string(name).size();
 	int arg_types_length = 0;
 	while(argTypes[arg_types_length])
 		arg_types_length++;
@@ -170,8 +317,98 @@ int rpcRegister(char* name, int* argTypes, skeleton f)
 
 	return REGISTER_BINDER_RET_UNRECON_TYPE;
 }
+
 int rpcExecute()
 {
+	fd_set master;      // Master file descriptor
+	fd_set read_fds;    // Temp file descriptor
+	int fdmax;          // Max number of file descirptors
+
+	int listener;       // Port listener
+	struct sockaddr_storage remoteaddr; // connector's address information
+	socklen_t addrlen;                  // Address length
+
+	struct addrinfo hints, *ai, *p;     // Address info
+	int rv;             // Result from getaddressinfo
+	int ONE = 1;
+
+	// clear the master and temp sets
+	FD_ZERO(&master);
+	FD_ZERO(&read_fds);
+
+	// Set the address info
+	memset(&hints, 0, sizeof hints);
+	hints.ai_family = AF_UNSPEC;
+	hints.ai_socktype = SOCK_STREAM;
+	hints.ai_flags = AI_PASSIVE; // use my IP
+
+	// Get address info
+	if ((rv = getaddrinfo(NULL, "0", &hints, &ai)) != 0)
+		return EXECUTE_ADDRINFO_ERROR;
+
+
+	listener = socket(ai->ai_family, ai->ai_socktype, ai->ai_protocol);
+	if(listener < 0)
+		return EXECUTE_SOCKET_OPEN_FAILURE;
+
+	setsockopt(listener, SOL_SOCKET, SO_REUSEADDR, &ONE, sizeof(int));
+	if(bind(listener, ai->ai_addr, ai->ai_addrlen) < 0)
+		return EXECUTE_SOCKET_BIND_FAILURE;
+
+	// Address info is no longer needed
+	freeaddrinfo(ai);
+
+	// Allow 5 connections from client
+	listen(listener, RPC_BACKLOG);
+
+	// add the listener to the master set
+	FD_SET(listener, &master);
+
+	// keep track of the biggest file descriptor
+	fdmax = listener;
+
+	// Server main loop
+	for(;;) {
+		// copy master
+		read_fds = master;
+		if (select(fdmax+1, &read_fds, NULL, NULL, NULL) < 0)
+			return EXECUTE_SELECTION_FAILURE;
+
+		// Iterate through the connectons
+		for(int index = 0; index < fdmax+1; index++)
+		{
+		    if (FD_ISSET(index, &read_fds))
+				{
+					if (index == listener)
+					{
+					    // New connection
+					    addrlen = sizeof remoteaddr;
+					    int newfd = accept(listener, (struct sockaddr *)&remoteaddr, &addrlen);
+							FD_SET(newfd, &master);     // Add new address to master
+							if (newfd > fdmax)         // keep track of the max
+								fdmax = newfd;
+		        } else {
+		            // handle data from a client
+		            int msg_length = 0;
+		            if (recv(index, &msg_length, sizeof(msg_length), 0) < 1) {
+		                // If length is 0, then the connection is closed by the client
+		                // If length is < 0, then there was an error in tramission
+		                close(index);
+		                FD_CLR(index, &master); // remove from master set
+		            } else {
+		                char buf[msg_length];
+		                recv(index, buf, msg_length, 0);
+		                std::string upper = to_cap(buf, msg_length);
+		                printf("Recieved from client %i: %s\n", index, buf);
+		                printf("SENDING TO client %i: %s\n", index, upper.c_str());
+		                if (send(index, upper.c_str(), upper.length(), 0) == -1)
+		                    perror("send");
+		            }
+		        }
+		    }
+		}
+	}
+
 	return 0;
 }
 int rpcTerminate()
@@ -299,4 +536,44 @@ int recieve_msg(int socket_fd, int expect_len; char buf[])
 	}
 
 	return SUCCESS;
+}
+
+int socket_connect(char* host_name, char* port_num)
+{
+	int socket_fd;
+	// Make connection to binder
+	struct addrinfo hints, *ai;
+
+	// Get the address info of binder
+	memset(&hints, 0, sizeof hints);
+	hints.ai_family = AF_UNSPEC;
+	hints.ai_socktype = SOCK_STREAM;
+	getaddrinfo(host_name, port_num, &hints, &ai);
+
+	// Open socket
+	socket_fd = socket(ai->ai_family, ai->ai_socktype, ai->ai_protocol);
+	if (socket_fd < 0)
+		return SOCKET_OPEN_FAILURE;
+
+	// Make connection
+	if (connect(socket_fd, ai->ai_addr, ai->ai_addrlen) < 0)
+		return SOCKET_BIND_FAILURE;
+
+	return socket_fd;
+}
+
+int get_arg_length(int* arg_type)
+{
+	// The length is the last two values
+	int length = (*arg_type) & 0x0000FFFF;
+	if(length == 0)
+	 	return 1;
+	return length;
+}
+
+int get_arg_type(int* arg_type)
+{
+	// Second byte is the type
+	int type = (*arg_type) & 0x00FF0000;
+	return type >> 16;
 }
