@@ -9,6 +9,7 @@
 #include <pthread.h>
 #include <netdb.h>
 #include <unistd.h>
+#include <algorithm>
 #include <map>
 #include <vector>
 #include "common.h"
@@ -131,7 +132,70 @@ void handleRegisterRequest(int clientSocketFd, int msgLength) {
     sendMessage(clientSocketFd, 3 * INT_SIZE, REGISTER_SUCCESS, responseMsg);
 }
 
+ServerLoc *lookupAvailableServer(string name, int *argTypes, int argSize) {
+    ServerLoc *selectedServer = NULL;
+    FuncSignature *func = new FuncSignature(name, argTypes, argSize);
+
+    for (map<FuncSignature *, vector<ServerLoc *> >::iterator it = funcDict.begin(); it != funcDict.end(); it ++) {
+        if (*func == *(it->first)) {
+            vector<ServerLoc *> availServers = it->second;
+
+            // Look up server queue in round robin fashion
+            for (int i = 0; i < serverQueue.size(); i++) {
+                ServerLoc * server = serverQueue.front();
+                for (int j = 0; j < availServers.size(); j++) {
+                    if (*server == *(availServers[j])) {
+                        // found the first available server
+                        selectedServer = server;
+                        break;
+                    }
+                }
+                rotate(serverQueue.begin(), serverQueue.end()-1, serverQueue.end());
+            }
+
+
+        }
+    }
+    return selectedServer;
+
+}
+
 void handleLocationRequest(int clientSocketFd, int msgLength) {
+    char buffer[msgLength];
+    int status = receiveMessage(clientSocketFd, msgLength, buffer);
+    if (status == RECEIVE_ERROR) {
+        // corrupt message
+        char responseMsg [INT_SIZE];
+        ReasonCode reason = MESSAGE_CORRUPTED;
+        memcpy(responseMsg, &reason, INT_SIZE);
+        sendMessage(clientSocketFd, 3 * INT_SIZE, LOC_FAILURE, responseMsg);
+        return;
+    }
+
+    char funcName[CHAR_ARR_SIZE];
+    int argSize = ((msgLength - 2 * CHAR_ARR_SIZE) / INT_SIZE) - 1;
+    int argTypes [argSize];
+
+    memcpy(funcName, buffer, CHAR_ARR_SIZE);
+    memcpy(argTypes, buffer + CHAR_ARR_SIZE, argSize);
+
+    string name(funcName);
+
+    ServerLoc * availServer;
+    availServer = lookupAvailableServer(name, argTypes, argSize);
+
+    if (!availServer) {
+        // function not available
+        char responseMsg [INT_SIZE];
+        ReasonCode reason = FUNCTION_NOT_FOUND;
+        memcpy(responseMsg, &reason, INT_SIZE);
+        sendMessage(clientSocketFd, 3 * INT_SIZE, LOC_FAILURE, responseMsg);
+    } else {
+        char responseMsg [CHAR_ARR_SIZE + INT_SIZE];
+        memcpy(responseMsg, availServer->serverId.c_str(), CHAR_ARR_SIZE);
+        memcpy(responseMsg + CHAR_ARR_SIZE, &(availServer->port), INT_SIZE);
+        sendMessage(clientSocketFd, 2 * INT_SIZE + CHAR_ARR_SIZE, LOC_SUCCESS, responseMsg);
+    }
 }
 
 void handleTerminateRequest() {
