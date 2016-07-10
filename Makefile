@@ -30,4 +30,4 @@ rpc.o: rpc.cc
 	ar crs librpc.a rpc.o
 
 clean:
-	rm -f *o client server librpc.a
+	rm -f *o client server binder librpc.a
