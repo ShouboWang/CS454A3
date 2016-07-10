@@ -8,38 +8,15 @@
 * returns SUCCESS is execution did not encounter error
 * else return the error status code
 */
-int sendMessage(int socket_fd, unsigned int msg_len, MessageType msg_type, char msg_data[])
+int sendMessage(int socket_fd, unsigned int data_len, MessageType msg_type, char msg_data[])
 {
     // Format of the data is
-    // int(msg_length)MessageType(type)char(msg)
-    // so the total would be 4 byte + 4 byte + msg_len
-    int data_len = msg_len + 8;
-    char data[data_len];
-
-    // copy the data length
-    memcpy(data, &msg_len, sizeof(int));
-    memcpy(data + INT_BYTE_PADDING, &msg_type, sizeof(MessageType));
-    memcpy(data + INT_BYTE_PADDING*2, msg_data, msg_len);
-
-		// Send the data through socket_fd
-		int have_sent = 0;
-		while(have_sent < data_len)
-		{
-			// Send data in chunks
-			int sent_len = send(socket_fd, data + have_sent, SOCKET_DATA_CHUNK_SIZE, 0);
-			if(sent_len < 0)
-                return sent_len;
-
-			// If 0 is returned then the sent is terminated
-			if(sent_len == 0)
-				break;
-
-			have_sent += sent_len;
-		}
-
-		return SUCCESS;
+    // Send the length
+    send(socket_fd, &data_len, sizeof(int), 0);
+    send(socket_fd, &msg_type, sizeof(MessageType), 0);
+    send(socket_fd, msg_data, data_len - 8, 0);
+    return SUCCESS;
 }
-
 
 int receiveMessage(int socket_fd, int expect_len, char buf[])
 {

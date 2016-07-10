@@ -142,7 +142,7 @@ void handleRegisterRequest(int clientSocketFd, int msgLength) {
         reason = REQUEST_SUCCESS;
     }
     memcpy(responseMsg, &reason, INT_SIZE);
-    std::cout << "done3" << std::endl;
+    std::cout << "reason: " << reason << std::endl;
     sendMessage(clientSocketFd, 3 * INT_SIZE, REGISTER_SUCCESS, responseMsg);
     std::cout << "done4" << std::endl;
 }
