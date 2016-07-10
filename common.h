@@ -1,6 +1,10 @@
 #ifndef COMMON_H
 #define COMMON_H
 
+#include <string>
+#include <stdlib.h>
+#include <string.h>
+
 // RPC const values
 #define RPC_BACKLOG 5
 #define INT_BYTE_PADDING 4
@@ -17,7 +21,6 @@
 
 #define INT_SIZE 4
 #define UNSIGNED_SHORT_SIZE 2
-#define CHAR_ARR_SIZE 128
 
 enum MessageType {
     TERMINATE = 0,
@@ -71,5 +74,6 @@ enum ReasonCode {
 
 // Warning
 #define TERMINATE_BINDER_DID_NOT_INITIATE 1
+
 
 #endif

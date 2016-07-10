@@ -22,6 +22,7 @@
 #include <thread>
 #include <pthread.h>
 
+// Structure used as key for mapping skeleton
 struct FuncSignature {
     std::string name;
     int* argTypes;
@@ -45,19 +46,21 @@ bool operator == (const FuncSignature &l, const FuncSignature &r) {
     
 }
 
-// Binder socket file descriptor
+// Mapping of signiture to skeleton
+std::map<FuncSignature*, skeleton> server_functions;
+
+// Binder and server socket file descriptor
 int binder_socket_fd;
-
-// RPC client socket fields
-char rpc_socket_id;
 int rpc_sock_fd;
-int rpc_sock_port;
 
+// Server execute terminating condition
 bool terminate;
 
+// Thread mutex lock
 int thread_count;
 pthread_mutex_t thread_count_lock;
 
+// Inc/Dec thread count
 void alt_thread_count(int count)
 {
 	pthread_mutex_lock(&thread_count_lock);
@@ -65,10 +68,7 @@ void alt_thread_count(int count)
 	pthread_mutex_unlock(&thread_count_lock);
 }
 
-// Map
-std::map<FuncSignature*, skeleton> server_functions;
-//bool operator < (const serverFuncKey& key1, const serverFuncKey& key2);
-
+// given the arg type, return the length of arg
 int get_arg_length(int* arg_type)
 {
     // The length is the last two values
@@ -78,6 +78,7 @@ int get_arg_length(int* arg_type)
     return length;
 }
 
+// given the arg type, return the type of arg
 int get_arg_type(int* arg_type)
 {
     // Second byte is the type
@@ -85,137 +86,104 @@ int get_arg_type(int* arg_type)
     return type >> 16;
 }
 
-
+// given the int type value, return the size of type
 int size_of_type(int type)
 {
-	if(type == ARG_CHAR)
-		return sizeof(char);
-	else if(type == ARG_SHORT)
-		return sizeof(short);
-	else if(type == ARG_INT)
-		return sizeof(int);
-	else if(type == ARG_LONG)
-		return sizeof(long);
-	else if(type == ARG_DOUBLE)
-		return sizeof(double);
-	else if(type == ARG_FLOAT)
-		return sizeof(float);
-	return -1;
+    if(type == ARG_CHAR)
+        return sizeof(char);
+    else if(type == ARG_SHORT)
+        return sizeof(short);
+    else if(type == ARG_INT)
+        return sizeof(int);
+    else if(type == ARG_LONG)
+        return sizeof(long);
+    else if(type == ARG_DOUBLE)
+        return sizeof(double);
+    else if(type == ARG_FLOAT)
+        return sizeof(float);
+    return -1;
 }
 
+// Given the host name and port number, establish connection
 int socket_connect(char* host_name, char* port_num)
 {
-     int socket_fd;
-     // Make connection to binder
-     struct addrinfo hints, *ai;
-
-     // Get the address info of binder
-     memset(&hints, 0, sizeof hints);
-     hints.ai_family = AF_INET;
-     hints.ai_socktype = SOCK_STREAM;
-     getaddrinfo(host_name, port_num, &hints, &ai);
-
-     // Open socket
-     socket_fd = socket(ai->ai_family, ai->ai_socktype, ai->ai_protocol);
-     if (socket_fd < 0)
-     return SOCKET_OPEN_FAILURE;
-
-     // Make connection
-     if (connect(socket_fd, ai->ai_addr, ai->ai_addrlen) < 0)
-     return SOCKET_BIND_FAILURE;
-
-     return socket_fd;
-}
-
-
-/*
- * Connection to binder via env varible
- * if connection is successful, binder_socket_fd will be set and success code
- * is returned
- * else, error code is returned
- */
-int connect_binder()
-{
-    // Check if binder is already connected
-    if (binder_socket_fd > 0)
-        return SUCCESS;
-
-    // Get Binder's address & port
-    char* binder_address = getenv(BINDER_ADDRESS_S);
-    char* binder_port = getenv(BINDER_PORT_S);
-
-    // Validates that the address and port is set
-    if(binder_address == NULL)
-        return INIT_BINDER_ADDRESS_NOT_FOUND;
-    else if(binder_port == NULL)
-        return INIT_BINDER_PORT_NOT_FOUND;
-
-    // Make connection to binder
-    struct addrinfo binder_hints, *binder_ai;
+    
+    int socket_fd;
+    struct addrinfo hints, *ai;
 
     // Get the address info of binder
-    memset(&binder_hints, 0, sizeof binder_hints);
-    binder_hints.ai_family = AF_INET;
-    binder_hints.ai_socktype = SOCK_STREAM;
-    getaddrinfo(binder_address, binder_port, &binder_hints, &binder_ai);
+    memset(&hints, 0, sizeof hints);
+    hints.ai_family = AF_INET;
+    hints.ai_socktype = SOCK_STREAM;
+    getaddrinfo(host_name, port_num, &hints, &ai);
 
     // Open socket
-    binder_socket_fd = socket(binder_ai->ai_family, binder_ai->ai_socktype, binder_ai->ai_protocol);
-    if (binder_socket_fd < 0)
-        return INIT_BINDER_SOCKET_OPEN_FAILURE;
+    socket_fd = socket(ai->ai_family, ai->ai_socktype, ai->ai_protocol);
+    if (socket_fd < 0)
+        return SOCKET_OPEN_FAILURE;
 
     // Make connection
-    if (connect(binder_socket_fd, binder_ai->ai_addr, binder_ai->ai_addrlen) < 0)
-        return INIT_BINDER_SOCKET_BIND_FAILURE;
-    
-    return SUCCESS;
+    if (connect(socket_fd, ai->ai_addr, ai->ai_addrlen) < 0)
+        return SOCKET_BIND_FAILURE;
+
+    return socket_fd;
 }
 
-// Wait for binder to sent terminate signal
+// Threading //
+// Thread for waiting on termination signal from binder
 void* wait_terminate(void* arg)
 {
-    // Format TERMINATE
     for(;;){
         int msg_type;
         recv(binder_socket_fd, &msg_type, sizeof(MessageType), 0);
+       
+        // Terminate
         if(msg_type == TERMINATE)
         {
             terminate = true;
             break;
         }
     }
+    
+    // Close the server socket, and exit thread
     close(rpc_sock_fd);
     pthread_exit(NULL);
     return 0;
 }
 
+// Thread for handling user request
 void* client_request_handler(void* arg)
 {
+    // Increase the thread count
     alt_thread_count(1);
 
     int client_fd = *(int*) arg;
+    
+    // Recieve the needed values
     int msg_type;
     int msg_length;
-
+    int arg_type_length;
+    
     recv(client_fd, &msg_length, sizeof(int), 0);
     recv(client_fd, &msg_type, sizeof(MessageType), 0);
-    
-    int arg_type_length;
     recv(client_fd, &arg_type_length, sizeof(int), 0);
     
-    // length EXECUTE, ARGLENGTH, name, argTypes, args
+    // Get the message body
     char *buffer = new char[msg_length - 3 * sizeof(int)];
     recv(client_fd, buffer, msg_length - 3 * sizeof(int), MSG_WAITALL);
     
-    char *funcName = new char[CHAR_ARR_SIZE];
+    // Get the function name
+    char *function_name = new char[DEFAULT_CHAR_ARR_SIZE];
     int arg_size_tot = msg_length - 3 * sizeof(int) - DEFAULT_CHAR_ARR_SIZE;
     int *client_args = (int*) malloc(arg_size_tot);
 
-    memcpy(funcName, buffer, DEFAULT_CHAR_ARR_SIZE);
+    // Extract the function namd and args
+    memcpy(function_name, buffer, DEFAULT_CHAR_ARR_SIZE);
     memcpy(client_args, buffer + DEFAULT_CHAR_ARR_SIZE, arg_size_tot);
     
-    int *arg_types = (int*) malloc(arg_type_length * 4);
-    memcpy(arg_types, client_args, arg_type_length * 4);
+    //
+    int *arg_types = (int*) malloc(arg_type_length * sizeof(int));
+    memcpy(arg_types, client_args, arg_type_length * sizeof(int));
     
     // client_args
     void** args = (void**) malloc(arg_type_length * sizeof(void*));
@@ -239,7 +207,7 @@ void* client_request_handler(void* arg)
     }
 
     int result = EXECUTE_FAILURE;
-    FuncSignature key(std::string(funcName), arg_types, arg_type_length);
+    FuncSignature key(std::string(function_name), arg_types, arg_type_length);
     skeleton s;
     for (std::map<FuncSignature*, skeleton>::iterator it = server_functions.begin(); it != server_functions.end(); it ++) {
         FuncSignature f = *(it->first);
@@ -259,7 +227,7 @@ void* client_request_handler(void* arg)
         send(client_fd, &msg_length, sizeof(int), 0);
         send(client_fd, &ret_msg_type, sizeof(MessageType), 0);
         send(client_fd, &arg_type_length, sizeof(int), 0);
-        send(client_fd, funcName, DEFAULT_CHAR_ARR_SIZE, 0);
+        send(client_fd, function_name, DEFAULT_CHAR_ARR_SIZE, 0);
         send(client_fd, arg_types, arg_type_length * 4, 0);
 
         for(int arg = 0; arg < arg_type_length; arg++)
@@ -313,9 +281,18 @@ int rpcInit()
 	listen(rpc_sock_fd, RPC_BACKLOG);
 
 	// Connect to binder
-	int binder_status_code = connect_binder();
-	if (binder_status_code != SUCCESS)
-		return binder_status_code;
+    char* binder_address = getenv(BINDER_ADDRESS_S);
+    char* binder_port = getenv(BINDER_PORT_S);
+    
+    // Validates that the address and port is set
+    if(binder_address == NULL)
+        return INIT_BINDER_ADDRESS_NOT_FOUND;
+    else if(binder_port == NULL)
+        return INIT_BINDER_PORT_NOT_FOUND;
+
+    binder_socket_fd = socket_connect(binder_address, binder_port);
+    if(binder_socket_fd < 0)
+        return INIT_BINDER_SOCKET_OPEN_FAILURE;
 	return SUCCESS;
 }
 

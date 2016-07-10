@@ -110,16 +110,16 @@ void handleRegisterRequest(int clientSocketFd, int msgLength) {
         return;
     }
 
-    char server[CHAR_ARR_SIZE];
+    char server[DEFAULT_CHAR_ARR_SIZE];
     unsigned short port;
-    char funcName[CHAR_ARR_SIZE];
-    int argSize = ((msgLength - 2 * CHAR_ARR_SIZE - UNSIGNED_SHORT_SIZE)/ INT_SIZE);
+    char funcName[DEFAULT_CHAR_ARR_SIZE];
+    int argSize = ((msgLength - 2 * DEFAULT_CHAR_ARR_SIZE - UNSIGNED_SHORT_SIZE)/ INT_SIZE);
     int *argTypes = new int[argSize];
 
-    memcpy(server, buffer, CHAR_ARR_SIZE);
-    memcpy(&port, buffer + CHAR_ARR_SIZE, UNSIGNED_SHORT_SIZE);
-    memcpy(funcName, buffer + CHAR_ARR_SIZE + UNSIGNED_SHORT_SIZE, CHAR_ARR_SIZE);
-    memcpy(argTypes, buffer + 2 * CHAR_ARR_SIZE + UNSIGNED_SHORT_SIZE, argSize * INT_SIZE);
+    memcpy(server, buffer, DEFAULT_CHAR_ARR_SIZE);
+    memcpy(&port, buffer + DEFAULT_CHAR_ARR_SIZE, UNSIGNED_SHORT_SIZE);
+    memcpy(funcName, buffer + DEFAULT_CHAR_ARR_SIZE + UNSIGNED_SHORT_SIZE, DEFAULT_CHAR_ARR_SIZE);
+    memcpy(argTypes, buffer + 2 * DEFAULT_CHAR_ARR_SIZE + UNSIGNED_SHORT_SIZE, argSize * INT_SIZE);
     
     std::string name(funcName);
     std::string serverId(server);
@@ -173,12 +173,12 @@ void handleLocationRequest(int clientSocketFd, int msgLength) {
         return;
     }
 
-    char funcName[CHAR_ARR_SIZE];
-    int argSize = ((msgLength - CHAR_ARR_SIZE) / INT_SIZE);
+    char funcName[DEFAULT_CHAR_ARR_SIZE];
+    int argSize = ((msgLength - DEFAULT_CHAR_ARR_SIZE) / INT_SIZE);
     int *argTypes = new int[argSize];
 
-    memcpy(funcName, buffer, CHAR_ARR_SIZE);
-    memcpy(argTypes, buffer + CHAR_ARR_SIZE, argSize * INT_SIZE);
+    memcpy(funcName, buffer, DEFAULT_CHAR_ARR_SIZE);
+    memcpy(argTypes, buffer + DEFAULT_CHAR_ARR_SIZE, argSize * INT_SIZE);
 
     std::string name(funcName);
 
@@ -192,10 +192,10 @@ void handleLocationRequest(int clientSocketFd, int msgLength) {
         memcpy(responseMsg, &reason, INT_SIZE);
         sendMessage(clientSocketFd, 3 * INT_SIZE, LOC_FAILURE, responseMsg);
     } else {
-        char responseMsg [CHAR_ARR_SIZE + INT_SIZE];
-        memcpy(responseMsg, availServer->serverId.c_str(), CHAR_ARR_SIZE);
-        memcpy(responseMsg + CHAR_ARR_SIZE, &(availServer->port), UNSIGNED_SHORT_SIZE);
-        sendMessage(clientSocketFd, 2 * INT_SIZE + CHAR_ARR_SIZE + UNSIGNED_SHORT_SIZE, LOC_SUCCESS, responseMsg);
+        char responseMsg [DEFAULT_CHAR_ARR_SIZE + INT_SIZE];
+        memcpy(responseMsg, availServer->serverId.c_str(), DEFAULT_CHAR_ARR_SIZE);
+        memcpy(responseMsg + DEFAULT_CHAR_ARR_SIZE, &(availServer->port), UNSIGNED_SHORT_SIZE);
+        sendMessage(clientSocketFd, 2 * INT_SIZE + DEFAULT_CHAR_ARR_SIZE + UNSIGNED_SHORT_SIZE, LOC_SUCCESS, responseMsg);
     }
 }
 
