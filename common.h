@@ -1,7 +1,6 @@
 #ifndef COMMON_H
 #define COMMON_H
 
-#include <string>
 #include <stdlib.h>
 #include <string.h>
 
@@ -19,8 +18,8 @@
 #define TERMINATING_CHAR '\0'
 
 
-#define INT_SIZE 4
-#define UNSIGNED_SHORT_SIZE 2
+#define INT_SIZE sizeof(int)
+#define UNSIGNED_SHORT_SIZE sizeof(unsigned short)
 
 enum MessageType {
     TERMINATE = 0,
