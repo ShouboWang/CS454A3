@@ -1,7 +1,6 @@
 #ifndef COMMON_H
 #define COMMON_H
 
-#include <string>
 #include <stdlib.h>
 #include <string.h>
 
@@ -19,8 +18,8 @@
 #define TERMINATING_CHAR '\0'
 
 
-#define INT_SIZE 4
-#define UNSIGNED_SHORT_SIZE 2
+#define INT_SIZE sizeof(int)
+#define UNSIGNED_SHORT_SIZE sizeof(unsigned short)
 
 enum MessageType {
     TERMINATE = 0,
@@ -62,18 +61,21 @@ enum ReasonCode {
 #define EXECUTE_SOCKET_BIND_FAILURE -11
 #define EXECUTE_SELECTION_FAILURE -12
 
+
 #define CALL_BINDER_ADDRESS_NOT_FOUND -31
 #define CALL_BINDER_PORT_NOT_FOUND -32
+#define CALL_BINDER_FUNCTION_NOT_FOUND -33
 
 #define RECEIVE_ERROR -404
 
-#define SOCKET_OPEN_FAILURE -33
-#define SOCKET_BIND_FAILURE -34
+#define SOCKET_OPEN_FAILURE -41
+#define SOCKET_BIND_FAILURE -42
 
 #define UNKNOW_MSG_TYPE_RESPONSE -100
 
 // Warning
 #define TERMINATE_BINDER_DID_NOT_INITIATE 1
+#define REGISTER_BINDER_FUNCTION_OVERRIDEN 2
 
 
 #endif

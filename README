@@ -1,1 +1,12 @@
-readme
+CS454 Assignment 3
+Shoubo Wangi(sbwang, 20476417) and Xiaochen Liu(xcliu, 20469767)
+
+To build,
+make
+make client
+make server
+
+To run,
+./binder
+./client
+./server

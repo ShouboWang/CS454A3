@@ -65,10 +65,11 @@ void registerServer(std::string serverId, unsigned short port, int socketFd) {
             return;
         }
     }
+    // push the server to round robin queue
     serverQueue.push_back(location);
 }
 
-int registerFunc(std::string name, int* argTypes, int argSize, std::string serverId, unsigned short port, int socketFd) {
+ReasonCode registerFunc(std::string name, int* argTypes, int argSize, std::string serverId, unsigned short port, int socketFd) {
     bool found = false;
     ServerLoc *location = new ServerLoc(serverId, port, socketFd);
     FuncSignature *func = new FuncSignature(name, argTypes, argSize);
@@ -80,7 +81,7 @@ int registerFunc(std::string name, int* argTypes, int argSize, std::string serve
             for (int i = 0; i < it->second.size(); i++) {
                 if (*(it->second[i]) == *location) {
                     // override function
-                    return 1;
+                    return FUNCTION_OVERRIDDEN;
                 }
             }
             it->second.push_back(location);
@@ -88,12 +89,13 @@ int registerFunc(std::string name, int* argTypes, int argSize, std::string serve
     }
 
     if (!found) {
+        // adds function to the dictioonary
         funcDict[func].push_back(location);
     }
 
-    // register server to queue
+    // register server to queue if not already
     registerServer(serverId, port, socketFd);
-    return 0;
+    return REQUEST_SUCCESS;
 }
 
 
@@ -101,6 +103,7 @@ void handleRegisterRequest(int clientSocketFd, int msgLength) {
     char buffer[msgLength];
     ReasonCode reason;
     char responseMsg [INT_SIZE];
+    // reads message to buffer
     int status = receiveMessage(clientSocketFd, msgLength, buffer);
     if (status == RECEIVE_ERROR) {
         // corrupt message
@@ -116,6 +119,7 @@ void handleRegisterRequest(int clientSocketFd, int msgLength) {
     int argSize = ((msgLength - 2 * DEFAULT_CHAR_ARR_SIZE - UNSIGNED_SHORT_SIZE)/ INT_SIZE);
     int *argTypes = new int[argSize];
 
+    // reads server and function info
     memcpy(server, buffer, DEFAULT_CHAR_ARR_SIZE);
     memcpy(&port, buffer + DEFAULT_CHAR_ARR_SIZE, UNSIGNED_SHORT_SIZE);
     memcpy(funcName, buffer + DEFAULT_CHAR_ARR_SIZE + UNSIGNED_SHORT_SIZE, DEFAULT_CHAR_ARR_SIZE);
@@ -124,12 +128,7 @@ void handleRegisterRequest(int clientSocketFd, int msgLength) {
     std::string name(funcName);
     std::string serverId(server);
     
-    status = registerFunc(name, argTypes, argSize, serverId, port, clientSocketFd);
-    if (status == 1) {
-        reason = FUNCTION_OVERRIDDEN;
-    } else {
-        reason = REQUEST_SUCCESS;
-    }
+    reason = registerFunc(name, argTypes, argSize, serverId, port, clientSocketFd);
     memcpy(responseMsg, &reason, INT_SIZE);
     sendMessage(clientSocketFd, 3 * INT_SIZE, REGISTER_SUCCESS, responseMsg);
 }
@@ -151,6 +150,7 @@ ServerLoc *lookupAvailableServer(std::string name, int *argTypes, int argSize) {
                         break;
                     }
                 }
+                // move the server to the back of the queue if cannot service the function
                 rotate(serverQueue.begin(), serverQueue.end()-1, serverQueue.end());
             }
 
@@ -163,6 +163,7 @@ ServerLoc *lookupAvailableServer(std::string name, int *argTypes, int argSize) {
 
 void handleLocationRequest(int clientSocketFd, int msgLength) {
     char buffer[msgLength];
+    // read message to buffer
     int status = receiveMessage(clientSocketFd, msgLength, buffer);
     if (status == RECEIVE_ERROR) {
         // corrupt message
@@ -177,21 +178,22 @@ void handleLocationRequest(int clientSocketFd, int msgLength) {
     int argSize = ((msgLength - DEFAULT_CHAR_ARR_SIZE) / INT_SIZE);
     int *argTypes = new int[argSize];
 
+    // reads function name and args
     memcpy(funcName, buffer, DEFAULT_CHAR_ARR_SIZE);
     memcpy(argTypes, buffer + DEFAULT_CHAR_ARR_SIZE, argSize * INT_SIZE);
 
     std::string name(funcName);
 
-    ServerLoc * availServer;
-    availServer = lookupAvailableServer(name, argTypes, argSize);
+    ServerLoc * availServer = lookupAvailableServer(name, argTypes, argSize);
 
     if (!availServer) {
-        // function not available
+        // function not found, return failure
         char responseMsg [INT_SIZE];
         ReasonCode reason = FUNCTION_NOT_FOUND;
         memcpy(responseMsg, &reason, INT_SIZE);
         sendMessage(clientSocketFd, 3 * INT_SIZE, LOC_FAILURE, responseMsg);
     } else {
+        // return server info if found
         char responseMsg [DEFAULT_CHAR_ARR_SIZE + INT_SIZE];
         memcpy(responseMsg, availServer->serverId.c_str(), DEFAULT_CHAR_ARR_SIZE);
         memcpy(responseMsg + DEFAULT_CHAR_ARR_SIZE, &(availServer->port), UNSIGNED_SHORT_SIZE);
@@ -230,7 +232,7 @@ void removeServer(int closingSocketFd) {
 }
 
 void cleanup() {
-    
+    // clean up database and queue
     for (int i = 0; i < serverQueue.size(); i++) {
         delete serverQueue[i];
     }
@@ -249,6 +251,7 @@ void cleanup() {
 
 
 void handleRequest(int clientSocketFd, fd_set *masterFds) {
+    // read message length
     int msgLength;
     int bytes = read(clientSocketFd, &msgLength, 4);
     if (bytes <= 0) {
@@ -261,6 +264,8 @@ void handleRequest(int clientSocketFd, fd_set *masterFds) {
         }
         return;
     }
+
+    // read message type
     MessageType msgType;
     bytes = read(clientSocketFd, &msgType, 4);
     if (bytes <= 0) {
@@ -298,7 +303,6 @@ int main() {
         return 1;
     }
 
-    //bzero((char*) &svrAddr, sizeof(svrAddr));
     memset((char*) &svrAddr, 0, sizeof(svrAddr));
 
     svrAddr.sin_family = AF_INET;

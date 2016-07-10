@@ -352,9 +352,9 @@ int rpcCall(char* name, int* argTypes, void** args)
 	} else if (res_type == LOC_FAILURE)
 	{
 		// If failure, get the reason code and return it
-		int reason;
-		recv(binder_socket_fd, &reason, sizeof(int), 0);
-		return reason;
+		int error = CALL_BINDER_FUNCTION_NOT_FOUND;
+		recv(binder_socket_fd, &error, sizeof(int), 0);
+		return error;
 	} else
 	{
 		return UNKNOW_MSG_TYPE_RESPONSE;
