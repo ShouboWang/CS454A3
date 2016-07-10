@@ -157,7 +157,7 @@ int main() {
   printf("\nEXPECTED return of f4: some integer other than 0");
   printf("\nACTUAL return of f4: %d\n", s4);
 
-  /* rpcTerminate 
+  /* rpcTerminate
   printf("\ndo you want to terminate? y/n: ");
   if (getchar() == 'y')
     rpcTerminate();

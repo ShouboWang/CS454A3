@@ -17,25 +17,35 @@
 #include <sys/wait.h>
 #include <signal.h>
 #include <iostream>
+#include <sstream>
 #include <map>
 #include <thread>
 #include <pthread.h>
 
-// Structs
-struct serverFuncKey {
-    std::string _name;
-	int* _argTypes;
-
-    serverFuncKey(std::string name, int* argTypes)
-	{
-		_name = name;
-		_argTypes = argTypes;
-	}
-
-    bool operator < (const serverFuncKey& foo1) const {
-        return _name.compare(foo1._name);
-    }
+struct FuncSignature {
+    std::string name;
+    int* argTypes;
+    int argSize;
+    FuncSignature(std::string name, int* argTypes, int argSize) : name(name), argTypes(argTypes), argSize(argSize) {}
 };
+
+bool operator == (const FuncSignature &l, const FuncSignature &r) {
+    
+    if (l.name == r.name && l.argSize == r.argSize) {
+        std::cout << "yes me" << std::endl;
+        int i = 0;
+        while (i < l.argSize) {
+            std::cout << "left: " << l.argTypes[i] << " right: " << r.argTypes[i] << std::endl;
+            if (l.argTypes[i] != r.argTypes[i]) {
+                return false;
+            }
+            i++;
+        }
+        return true;
+    }
+    return false;
+    
+}
 
 // Binder socket file descriptor
 int binder_socket_fd;
@@ -58,7 +68,7 @@ void alt_thread_count(int count)
 }
 
 // Map
-std::map<serverFuncKey, skeleton> server_functions;
+std::map<FuncSignature*, skeleton> server_functions;
 //bool operator < (const serverFuncKey& key1, const serverFuncKey& key2);
 
 int get_arg_length(int* arg_type)
@@ -100,22 +110,22 @@ int socket_connect(char* host_name, char* port_num)
      int socket_fd;
      // Make connection to binder
      struct addrinfo hints, *ai;
-     
+
      // Get the address info of binder
      memset(&hints, 0, sizeof hints);
      hints.ai_family = AF_INET;
      hints.ai_socktype = SOCK_STREAM;
      getaddrinfo(host_name, port_num, &hints, &ai);
-     
+
      // Open socket
      socket_fd = socket(ai->ai_family, ai->ai_socktype, ai->ai_protocol);
      if (socket_fd < 0)
      return SOCKET_OPEN_FAILURE;
-     
+
      // Make connection
      if (connect(socket_fd, ai->ai_addr, ai->ai_addrlen) < 0)
      return SOCKET_BIND_FAILURE;
-     
+
      return socket_fd;
 }
 
@@ -189,79 +199,134 @@ void* wait_terminate(void* arg)
 
 void* client_request_handler(void* arg)
 {
+    std::cout << "client_request_handler" << std::endl;
     // Increase the thread count
     alt_thread_count(1);
-    
+
     int client_fd = *(int*) arg;
+    std::cout << "client_fd: " << client_fd<<std::endl;
     int msg_type;
     int msg_length;
     char function_name[DEFAULT_CHAR_ARR_SIZE];
-    
+
     recv(client_fd, &msg_length, sizeof(int), 0);
+    std::cout << "msg_length: " << msg_length<<std::endl;
     recv(client_fd, &msg_type, sizeof(MessageType), 0);
+    std::cout << "msg_type: " << msg_type<<std::endl;
+
     
-    //func_name_length + 1 + arg_types_length * 4 + arg_size;
-    // Get the function name
-    recv(client_fd, function_name, DEFAULT_CHAR_ARR_SIZE, 0);
+    int arg_type_length;
+    recv(client_fd, &arg_type_length, sizeof(int), 0);
+    std::cout << "arg_type_length: " << arg_type_length<<std::endl;
     
+    // length EXECUTE, name, argTypes, args
+    char buffer[msg_length - 3 * sizeof(int)];
+    std::cout << "waiting for: " <<( msg_length - 2 * sizeof(int) )<<std::endl;
+    recv(client_fd, buffer, msg_length - 2 * sizeof(int), 0);
+    std::cout << "recieve done: " << std::endl;
+    
+    char funcName[CHAR_ARR_SIZE];
     int arg_size_tot = msg_length - DEFAULT_CHAR_ARR_SIZE;
     int *client_args = (int*) malloc(arg_size_tot);
-    recv(client_fd, client_args, arg_size_tot, MSG_WAITALL);
+
+    memcpy(funcName, buffer, CHAR_ARR_SIZE);
+    std::cout << "function_name: " << funcName<<std::endl;
+    memcpy(client_args, buffer + CHAR_ARR_SIZE, arg_size_tot);
+    std::cout << "client_args: " << client_args<<std::endl;
     
-    // Get the number of args
-    int arg_types_length = get_arg_length(client_args);
     
-    int *arg_types = (int*) malloc(arg_types_length * 4);
-    void** args = (void**) malloc(arg_types_length * sizeof(void*));
-    void* args_index = client_args + arg_types_length;
+    // Get the function name
+    //recv(client_fd, function_name, DEFAULT_CHAR_ARR_SIZE, 0);
+    //std::cout << "function_name: " << function_name<<std::endl;
+
+    //int arg_size_tot = msg_length - DEFAULT_CHAR_ARR_SIZE;
+    //int *client_args = (int*) malloc(arg_size_tot);
+    //recv(client_fd, client_args, arg_size_tot, MSG_WAITALL);
     
-    for (int index = 0; index < arg_types_length; index++)
+    int *arg_types = (int*) malloc(arg_type_length * 4);
+    memcpy(arg_types, client_args, arg_type_length * 4);
+    for(int i = 0; i < arg_type_length; i++)
+    {
+        std::cout << "arg_types: " << arg_types[i]<<std::endl;
+    }
+    
+    void** args = (void**) malloc(arg_type_length * sizeof(void*));
+    void* args_index = client_args + arg_type_length;
+
+    for (int index = 0; index < arg_type_length; index++)
     {
         //see what type/len of arg we're dealing with
         int arg_type = get_arg_type(&arg_types[index]);
         int arg_type_size = size_of_type(arg_type);
         int arr_size = get_arg_length(&arg_types[index]);
         
-        //temp holder
-        void* args_holder = (void*) malloc(arr_size * arg_type_size);
-        
-        //copy the address
-        args[index] = args_holder;
-        
-        //copy the contents of array into temp holder
-        for (int j = 0; j < arr_size; j++)
+        std::cout << "arg_type: " << arg_type <<std::endl;
+        std::cout << "arg_type_size: " << arg_type_size <<std::endl;
+        std::cout << "arr_size: " << arr_size <<std::endl;
+
+        void* holder = (void*) malloc(arr_size * arg_type_size);
+        args[index] = holder;
+        for (int i = 0; i < arr_size; i++)
         {
-            void* temp = (char*) args_holder + j * arg_type_size;
+            void* temp = (char*) holder + i * arg_type_size;
             memcpy(temp, args_index, arg_type_size);
             args_index = (void*) ((char*) args_index + arg_type_size);
         }
     }
     
-    int result = EXECUTE_FAILURE;
-    struct serverFuncKey key(std::string(function_name), arg_types);
-    skeleton s = server_functions[key];
-    if(s != NULL) {
-        result = s(arg_types, args);
+    for(int i = 0; i < arg_type_length; i++)
+    {
+        std::cout << "recieved args: " << *(int *)args[i] << std::endl;
     }
     
-    if(result == EXECUTE_SUCCESS)
+    std::cout << "before execution" << std::endl;
+
+    int result = EXECUTE_FAILURE;
+    
+    FuncSignature key(std::string(funcName), arg_types, arg_type_length);
+    std::cout << "key.name: " << key.name <<std::endl;
+    std::cout << "key.size: " << key.argSize <<std::endl;
+    skeleton s;
+    for (std::map<FuncSignature*, skeleton>::iterator it = server_functions.begin(); it != server_functions.end(); it ++) {
+        FuncSignature f = *(it->first);
+        std::cout << "f.name: " << f.name <<std::endl;
+        std::cout << "f.size: " << f.argSize <<std::endl;
+        if(f == key)
+        {
+            s = it->second;
+            break;
+        }
+    }
+    
+    if(s != NULL) {
+        std::cout << "skeleton found" << std::endl;
+        result = s(arg_types, args);
+        std::cout << "result: " << result  << std::endl;
+    } else {
+        std::cout << "skeleton not found" << std::endl;
+    }
+
+    if(result == 0) // success
     {
+        std::cout << "success" << std::endl;
         int ret_msg_type = EXECUTE_SUCCESS;
         send(client_fd, &msg_length, sizeof(int), 0);
         send(client_fd, &ret_msg_type, sizeof(MessageType), 0);
-        send(client_fd, function_name, sizeof(function_name), 0);
-        send(client_fd, arg_types, arg_types_length * 4, 0);
-        
-        for(int arg = 0; arg < arg_types_length; arg++)
+        send(client_fd, &arg_type_length, sizeof(int), 0);
+        send(client_fd, function_name, DEFAULT_CHAR_ARR_SIZE, 0);
+        send(client_fd, arg_types, arg_type_length * 4, 0);
+
+        for(int arg = 0; arg < arg_type_length; arg++)
         {
             int arg_type = get_arg_type(&arg_types[arg]);
             int arg_length = get_arg_length(&arg_types[arg]);
             int arg_size = size_of_type(arg_type);
             send(client_fd, (void*) args[arg], arg_length * arg_size, 0);
         }
-        
+
     } else
     {
+        std::cout << "not success" << std::endl;
         // EXECUTE_FAILURE, reasonCode
         int ret_msg_type = EXECUTE_FAILURE;
         int ret_msg_length = sizeof(int);
@@ -269,14 +334,15 @@ void* client_request_handler(void* arg)
         send(client_fd, &ret_msg_type, sizeof(MessageType), 0);
         send(client_fd, &result, sizeof(int), 0);
     }
-    
+
     close(client_fd);
     free(args);
     free(arg_types);
     free(client_args);
-    
+
     alt_thread_count(-1);
     pthread_exit(NULL);
+    std::cout << "thread exit" << std::endl;
     return 0;
 }
 
@@ -344,7 +410,7 @@ int rpcCall(char* name, int* argTypes, void** args)
 		return CALL_BINDER_PORT_NOT_FOUND;
 
 	int binder = socket_connect(binder_address, binder_port);
-    std::cout << "sending msg_length: " << binder << std::endl;
+    std::cout << "binder: " << binder << std::endl;
 
 	// Make the msg
 	// string(name'\0')int(argTypes)
@@ -354,11 +420,11 @@ int rpcCall(char* name, int* argTypes, void** args)
 
     // length, LOC_REQUEST, name, argTypes
 	int msg_length = sizeof(int) + sizeof(MessageType) + DEFAULT_CHAR_ARR_SIZE + arg_types_length * sizeof(int);
-    
+
 	// Sent the length & type
 	send(binder, &msg_length, sizeof(int), 0);
     std::cout << "sending msg_length: " << msg_length << std::endl;
-    
+
     int msg_type = LOC_REQUEST;
 	send(binder, &msg_type, sizeof(MessageType), 0);
     std::cout << "sending msg_type: " << msg_type << std::endl;
@@ -366,7 +432,7 @@ int rpcCall(char* name, int* argTypes, void** args)
 	// Send the msg
 	send(binder, name, DEFAULT_CHAR_ARR_SIZE, 0);
     std::cout << "sending name: " << name << std::endl;
-    
+
 	send(binder, argTypes, arg_types_length * sizeof(int), 0);
     for(int i = 0; i < arg_types_length; i++)
     {
@@ -379,7 +445,7 @@ int rpcCall(char* name, int* argTypes, void** args)
     int recv_length;
     recv(binder, &recv_length, sizeof(int), 0);
     std::cout << "receved recv_length: " << recv_length << std::endl;
-    
+
 	int res_type;
 	recv(binder, &res_type, sizeof(MessageType), 0);
     std::cout << "receved res_type: " << res_type << std::endl;
@@ -395,10 +461,10 @@ int rpcCall(char* name, int* argTypes, void** args)
         std::cout << "receved server_port: " << server_port << std::endl;
 	} else if (res_type == LOC_FAILURE)
 	{
+        std::cout << "error" << server_port << std::endl;
 		// If failure, get the reason code and return it
 		int reason;
 		recv(binder, &reason, sizeof(int), 0);
-        std::cout << "reason " << reason << std::endl;
 		close(binder);
 		return reason;
 	} else
@@ -409,9 +475,12 @@ int rpcCall(char* name, int* argTypes, void** args)
 
 	// sent to server and to EXECUTE
 	// Connection
-    char char_port[2];
-    char_port[0] = server_port & 0xff;
-    char_port[1] = (server_port >> 8) & 0xff;
+    std::stringstream ss;
+    ss << server_port;
+    std::string str_port = ss.str();
+    char char_port[str_port.size()];
+    strcpy(char_port, str_port.c_str());
+    std::cout << "char_port: " << char_port << std::endl;
 	int server_fd = socket_connect(server_address, char_port);
 
 	// Get the size
@@ -426,19 +495,29 @@ int rpcCall(char* name, int* argTypes, void** args)
 
 		arg_size += type_size * type_length;
 	}
-    
-    // length EXECUTE, name, argTypes, args
-	msg_length = sizeof(int) + sizeof(MessageType) + DEFAULT_CHAR_ARR_SIZE + arg_types_length * sizeof(int) + arg_size;
+
+    // length EXECUTE, sizeofarg, name, argTypes, args
+	msg_length = sizeof(int) + sizeof(MessageType) + sizeof(int) + DEFAULT_CHAR_ARR_SIZE + arg_types_length * sizeof(int) + arg_size;
 
 	// Send the message to server
 	// Message type and length
 	send(server_fd, &msg_length, sizeof(int), 0);
+    std::cout << "msg_length: " << msg_length << std::endl;
     msg_type = EXECUTE;
 	send(server_fd, &msg_type, sizeof(MessageType), 0);
+    std::cout << "msg_type: " << msg_type << std::endl;
+    
+    send(server_fd, &arg_types_length, sizeof(int), 0);
+    std::cout << "sending arg_types_length: " << arg_types_length << std::endl;
 
 	// function name and signiture
 	send(server_fd, name, DEFAULT_CHAR_ARR_SIZE, 0);
+    std::cout << "name: " << name << std::endl;
 	send(server_fd, argTypes, arg_types_length * sizeof(int), 0);
+    for(int i = 0; i < arg_types_length; i++)
+    {
+        std::cout << "sending argTypes: " << argTypes[i] << std::endl;
+    }
 
 	// Send each arg
 	for(int arg = 0; arg < arg_types_length; arg++)
@@ -447,6 +526,8 @@ int rpcCall(char* name, int* argTypes, void** args)
 		int arg_length = get_arg_length(&argTypes[arg]);
 		int arg_size = size_of_type(arg_type);
 		send(server_fd, (void*) args[arg], arg_length * arg_size, 0);
+        std::cout << "sending arg: " << *(int *)args[arg] << std::endl;
+        std::cout << "width size: " << (arg_length * arg_size) << std::endl;
 	}
 
 	// Server response
@@ -455,23 +536,65 @@ int rpcCall(char* name, int* argTypes, void** args)
 	// EXECUTE_FAILURE, reasonCode
 	int recv_msg_length;
 	int recv_msg_type;
+    int recv_msg_arg_length;
 	recv(server_fd, &recv_msg_length, sizeof(int), 0);
 	recv(server_fd, &recv_msg_type, sizeof(MessageType), 0);
+	recv(server_fd, &recv_msg_arg_length, sizeof(int), 0);
+    std::cout << "recv_msg_length: " << recv_msg_length << std::endl;
+    std::cout << "recv_msg_type: " << recv_msg_type << std::endl;
+    std::cout << "recv_msg_arg_length: " << recv_msg_arg_length << std::endl;
 
 	if(recv_msg_type == EXECUTE_SUCCESS)
 	{
-		char function_name[DEFAULT_CHAR_ARR_SIZE];
-		recv(server_fd, function_name, DEFAULT_CHAR_ARR_SIZE, 0);
-		recv(server_fd, argTypes, arg_types_length * 4, 0);
-
-		for (int arg = 0; arg < arg_types_length - 1; arg++) //for each argument
-		{
-			int arg_type = get_arg_type(&argTypes[arg]);
-			int arg_length = get_arg_length(&argTypes[arg]);
-			int arg_size = size_of_type(arg_type);
-
-			recv(server_fd, args[arg], arg_length * arg_size, 0);
-		}
+		char buffer[recv_msg_length - 3*sizeof(int)];
+        std::cout << "recv_msg_length - 3*sizeof(int): " << recv_msg_length - 3*sizeof(int) << std::endl;
+		recv(server_fd, buffer, recv_msg_length - 3 * sizeof(int), 0);
+        std::cout << "done: " << std::endl;
+        
+        
+        int arg_size_tot = msg_length - 3*sizeof(int) - DEFAULT_CHAR_ARR_SIZE;
+        int *client_args = (int*) malloc(arg_size_tot);
+        memcpy(client_args, buffer + DEFAULT_CHAR_ARR_SIZE, arg_size_tot);
+        
+        
+        int *arg_types = new int[arg_types_length * 4];
+        memcpy(arg_types, client_args, arg_types_length * 4);
+        for(int i = 0; i < arg_types_length; i++)
+        {
+            std::cout << "arg_types: " << arg_types[i]<<std::endl;
+        }
+        
+        void* args_index = client_args + arg_types_length;
+        
+        
+        
+        for (int index = 0; index < arg_types_length; index++)
+        {
+            //see what type/len of arg we're dealing with
+            int arg_type = get_arg_type(&arg_types[index]);
+            int arg_type_size = size_of_type(arg_type);
+            int arr_size = get_arg_length(&arg_types[index]);
+            
+            std::cout << "arg_type: " << arg_type <<std::endl;
+            std::cout << "arg_type_size: " << arg_type_size <<std::endl;
+            std::cout << "arr_size: " << arr_size <<std::endl;
+            
+            void* holder = (void*) malloc(arr_size * arg_type_size);
+            args[index] = holder;
+            for (int i = 0; i < arr_size; i++)
+            {
+                void* temp = (char*) holder + i * arg_type_size;
+                memcpy(temp, args_index, arg_type_size);
+                args_index = (void*) ((char*) args_index + arg_type_size);
+            }
+        }
+        
+        for(int arg = 0; arg < arg_types_length; arg++)
+        {
+            std::cout << "final arg" << arg << ": " << *(int *)args[arg] << std::endl;
+        }
+        
+        
 	} else if (recv_msg_type == EXECUTE_FAILURE)
 	{
 			int reasonCode;
@@ -483,7 +606,7 @@ int rpcCall(char* name, int* argTypes, void** args)
 		close(server_fd);
 		return UNKNOW_MSG_TYPE_RESPONSE;
 	}
-    
+
     return 0;
 }
 
@@ -572,7 +695,7 @@ int rpcRegister(char* name, int* argTypes, skeleton f)
 	if(response_status == REGISTER_SUCCESS)
 	{
 		// If the binder register is successful, add the skeleton to map
-        struct serverFuncKey key(std::string(name), argTypes);
+        FuncSignature* key = new FuncSignature(std::string(name), argTypes, arg_types_length);
 		server_functions[key] = f;
 		std::cout << "out1" << std::endl;
 		return response_code;
@@ -598,7 +721,7 @@ int rpcExecute()
     // clear the master and temp sets
     FD_ZERO(&master);
     FD_ZERO(&read_fds);
-    
+
     // add the listener to the master set
     FD_SET(rpc_sock_fd, &master);
 
@@ -613,6 +736,17 @@ int rpcExecute()
 
 
     // Server main loop
+    while(!terminate) {
+        std::cout << "waiting for connection: "<<std::endl;
+        int newfd = accept(rpc_sock_fd, (struct sockaddr *)&remoteaddr, &addrlen);
+        std::cout << "processing thread: " << std::endl;
+        std::cout << "newfd: " << newfd<<std::endl;
+        pthread_t client_thread;
+        pthread_create(&client_thread, NULL, client_request_handler, (void*) &newfd);
+        
+    }
+
+    /*// Server main loop
     while(!terminate) {
         // copy master
         read_fds = master;
@@ -636,12 +770,14 @@ int rpcExecute()
                 } else {
                     // Create a new thread to handle the client's request so that it
                     // wont be blocking
+                    std::cout << "processing thread: " << std::endl;
+                    std::cout << "index: " << index<<std::endl;
                     pthread_t client_thread;
                     pthread_create(&client_thread, NULL, client_request_handler, (void*) &index);
                 }
             }
         }
-    }
+    }*/
 
     while(thread_count < 0){}
 
