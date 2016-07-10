@@ -60,6 +60,23 @@ void alt_thread_count(int count)
 std::map<serverFuncKey, skeleton> server_functions;
 //bool operator < (const serverFuncKey& key1, const serverFuncKey& key2);
 
+int get_arg_length(int* arg_type)
+{
+    // The length is the last two values
+    int length = (*arg_type) & 0x0000FFFF;
+    if(length == 0)
+        return 1;
+    return length;
+}
+
+int get_arg_type(int* arg_type)
+{
+    // Second byte is the type
+    int type = (*arg_type) & 0x00FF0000;
+    return type >> 16;
+}
+
+
 int size_of_type(int type)
 {
 	if(type == ARG_CHAR)
@@ -75,6 +92,30 @@ int size_of_type(int type)
 	else if(type == ARG_FLOAT)
 		return sizeof(float);
 	return -1;
+}
+
+int socket_connect(char* host_name, char* port_num)
+{
+     int socket_fd;
+     // Make connection to binder
+     struct addrinfo hints, *ai;
+     
+     // Get the address info of binder
+     memset(&hints, 0, sizeof hints);
+     hints.ai_family = AF_UNSPEC;
+     hints.ai_socktype = SOCK_STREAM;
+     getaddrinfo(host_name, port_num, &hints, &ai);
+     
+     // Open socket
+     socket_fd = socket(ai->ai_family, ai->ai_socktype, ai->ai_protocol);
+     if (socket_fd < 0)
+     return SOCKET_OPEN_FAILURE;
+     
+     // Make connection
+     if (connect(socket_fd, ai->ai_addr, ai->ai_addrlen) < 0)
+     return SOCKET_BIND_FAILURE;
+     
+     return socket_fd;
 }
 
 
@@ -129,6 +170,114 @@ int connect_binder()
     return SUCCESS;
 }
 
+// Wait for binder to sent terminate signal
+void* wait_terminate(void* arg)
+{
+    // Format TERMINATE
+    for(;;){
+        int msg_type;
+        recv(binder_socket_fd, &msg_type, sizeof(MessageType), 0);
+        if(msg_type == TERMINATE)
+        {
+            terminate = true;
+            pthread_exit(NULL);
+        }
+    }
+    return 0;
+}
+
+void* client_request_handler(void* arg)
+{
+    // Increase the thread count
+    alt_thread_count(1);
+    
+    int client_fd = *(int*) arg;
+    int msg_type;
+    int msg_length;
+    char function_name[DEFAULT_CHAR_ARR_SIZE];
+    
+    recv(client_fd, &msg_length, sizeof(int), 0);
+    recv(client_fd, &msg_type, sizeof(MessageType), 0);
+    
+    //func_name_length + 1 + arg_types_length * 4 + arg_size;
+    // Get the function name
+    recv(client_fd, function_name, DEFAULT_CHAR_ARR_SIZE, 0);
+    
+    int arg_size_tot = msg_length - DEFAULT_CHAR_ARR_SIZE;
+    int *client_args = (int*) malloc(arg_size_tot);
+    recv(client_fd, client_args, arg_size_tot, MSG_WAITALL);
+    
+    // Get the number of args
+    int arg_types_length = get_arg_length(client_args);
+    
+    int *arg_types = (int*) malloc(arg_types_length * 4);
+    void** args = (void**) malloc(arg_types_length * sizeof(void*));
+    void* args_index = client_args + arg_types_length;
+    
+    for (int index = 0; index < arg_types_length; index++)
+    {
+        //see what type/len of arg we're dealing with
+        int arg_type = get_arg_type(&arg_types[index]);
+        int arg_type_size = size_of_type(arg_type);
+        int arr_size = get_arg_length(&arg_types[index]);
+        
+        //temp holder
+        void* args_holder = (void*) malloc(arr_size * arg_type_size);
+        
+        //copy the address
+        args[index] = args_holder;
+        
+        //copy the contents of array into temp holder
+        for (int j = 0; j < arr_size; j++)
+        {
+            void* temp = (char*) args_holder + j * arg_type_size;
+            memcpy(temp, args_index, arg_type_size);
+            args_index = (void*) ((char*) args_index + arg_type_size);
+        }
+    }
+    
+    int result = EXECUTE_FAILURE;
+    struct serverFuncKey key(std::string(function_name), arg_types);
+    skeleton s = server_functions[key];
+    if(s != NULL) {
+        result = s(arg_types, args);
+    }
+    
+    if(result == EXECUTE_SUCCESS)
+    {
+        int ret_msg_type = EXECUTE_SUCCESS;
+        send(client_fd, &msg_length, sizeof(int), 0);
+        send(client_fd, &ret_msg_type, sizeof(MessageType), 0);
+        send(client_fd, function_name, sizeof(function_name), 0);
+        send(client_fd, arg_types, arg_types_length * 4, 0);
+        
+        for(int arg = 0; arg < arg_types_length; arg++)
+        {
+            int arg_type = get_arg_type(&arg_types[arg]);
+            int arg_length = get_arg_length(&arg_types[arg]);
+            int arg_size = size_of_type(arg_type);
+            send(client_fd, (void*) args[arg], arg_length * arg_size, 0);
+        }
+        
+    } else
+    {
+        // EXECUTE_FAILURE, reasonCode
+        int ret_msg_type = EXECUTE_FAILURE;
+        int ret_msg_length = sizeof(int);
+        send(client_fd, &ret_msg_length, sizeof(int), 0);
+        send(client_fd, &ret_msg_type, sizeof(MessageType), 0);
+        send(client_fd, &result, sizeof(int), 0);
+    }
+    
+    close(client_fd);
+    free(args);
+    free(arg_types);
+    free(client_args);
+    
+    alt_thread_count(-1);
+    pthread_exit(NULL);
+    return 0;
+}
 
 int rpcInit()
 {
@@ -181,7 +330,6 @@ int rpcInit()
 // Called by client
 int rpcCall(char* name, int* argTypes, void** args)
 {
-    /*
 	// Connect to binder
 	// Get Binder's address & port
 	char* binder_address = getenv(BINDER_ADDRESS_S);
@@ -193,25 +341,24 @@ int rpcCall(char* name, int* argTypes, void** args)
 	else if(binder_port == NULL)
 		return CALL_BINDER_PORT_NOT_FOUND;
 
-	binder = socket_connect(binder_address, binder_port);
+	int binder = socket_connect(binder_address, binder_port);
 
 	// Make the msg
 	// string(name'\0')int(argTypes)
-	int func_name_length = string(name).size();
 	int arg_types_length = 0;
 	while(argTypes[arg_types_length])
 		arg_types_length++;
 
-	int msg_length = func_name_length + 1 + arg_types_length * 4;
-	char msg[msg_length];
+    // length, LOC_REQUEST, name, argTypes
+	int msg_length = sizeof(int) + sizeof(MessageType) + DEFAULT_CHAR_ARR_SIZE + arg_types_length * sizeof(int);
 
 	// Sent the length & type
 	send(binder, &msg_length, sizeof(int), 0);
-	send(binder, &MessageType.LOC_REQUEST, sizeof(MessageType), 0);
+    int msg_type = LOC_REQUEST;
+	send(binder, &msg_type, sizeof(MessageType), 0);
 
 	// Send the msg
-	send(binder, name, func_name_length, 0);
-	send(binder, TERMINATING_CHAR, sizeof(char), 0);
+	send(binder, name, DEFAULT_CHAR_ARR_SIZE, 0);
 	send(binder, argTypes, arg_types_length * sizeof(int), 0);
 
 	// Recieve the response type
@@ -220,12 +367,12 @@ int rpcCall(char* name, int* argTypes, void** args)
 
 	char server_address[DEFAULT_CHAR_ARR_SIZE];
 	char server_port[DEFAULT_CHAR_ARR_SIZE];
-	if(res_type == MessageType.LOC_REQUEST_SUCCESS)
+	if(res_type == LOC_SUCCESS)
 	{
 		// successful response, get the address and port
 		recv(binder, server_address, DEFAULT_CHAR_ARR_SIZE, 0);
 		recv(binder, server_port, DEFAULT_CHAR_ARR_SIZE, 0);
-	} else if (res_type == MessageType.LOC_REQUEST_FAILURE)
+	} else if (res_type == LOC_FAILURE)
 	{
 		// If failure, get the reason code and return it
 		int reason;
@@ -247,31 +394,32 @@ int rpcCall(char* name, int* argTypes, void** args)
 	for(int arg = 0; arg < arg_types_length; arg++)
 	{
 		// For each arg
-		int arg_type = get_arg_type(argTypes[arg]);
+		int arg_type = get_arg_type(&argTypes[arg]);
 
-		int type_length = get_arg_length(argTypes[arg])
+        int type_length = get_arg_length(&argTypes[arg]);
 		int type_size = size_of_type(arg_type);
 
 		arg_size += type_size * type_length;
 	}
-
-	msg_length = func_name_length + 1 + arg_types_length * 4 + arg_size;
+    
+    // length EXECUTE, name, argTypes, args
+	msg_length = sizeof(int) + sizeof(MessageType) + DEFAULT_CHAR_ARR_SIZE + arg_types_length * sizeof(int) + arg_size;
 
 	// Send the message to server
 	// Message type and length
 	send(server_fd, &msg_length, sizeof(int), 0);
-	send(server_fd, MessageType.EXECUTE, sizeof(MessageType), 0);
+    msg_type = EXECUTE;
+	send(server_fd, &msg_type, sizeof(MessageType), 0);
 
 	// function name and signiture
-	send(server_fd, name, func_name_length, 0);
-	send(server_fd, TERMINATING_CHAR, sizeof(char), 0);
-	send(server_fd, argTypes, arg_types_length * 4, 0);
+	send(server_fd, name, DEFAULT_CHAR_ARR_SIZE, 0);
+	send(server_fd, argTypes, arg_types_length * sizeof(int), 0);
 
 	// Send each arg
 	for(int arg = 0; arg < arg_types_length; arg++)
 	{
-		int arg_type = get_arg_type(argTypes[args]);
-		int arg_length = get_arg_length(argTypes[args]);
+		int arg_type = get_arg_type(&argTypes[arg]);
+		int arg_length = get_arg_length(&argTypes[arg]);
 		int arg_size = size_of_type(arg_type);
 		send(server_fd, (void*) args[arg], arg_length * arg_size, 0);
 	}
@@ -285,7 +433,7 @@ int rpcCall(char* name, int* argTypes, void** args)
 	recv(server_fd, &recv_msg_length, sizeof(int), 0);
 	recv(server_fd, &recv_msg_type, sizeof(MessageType), 0);
 
-	if(recv_msg_type == MessageType.EXECUTE_SUCCESS)
+	if(recv_msg_type == EXECUTE_SUCCESS)
 	{
 		char function_name[DEFAULT_CHAR_ARR_SIZE];
 		recv(server_fd, function_name, DEFAULT_CHAR_ARR_SIZE, 0);
@@ -293,13 +441,13 @@ int rpcCall(char* name, int* argTypes, void** args)
 
 		for (int arg = 0; arg < arg_types_length - 1; arg++) //for each argument
 		{
-			int arg_type = get_arg_type(argTypes[arg]);
-			int arg_length = get_arg_length(argTypes[arg]);
+			int arg_type = get_arg_type(&argTypes[arg]);
+			int arg_length = get_arg_length(&argTypes[arg]);
 			int arg_size = size_of_type(arg_type);
 
 			recv(server_fd, args[arg], arg_length * arg_size, 0);
 		}
-	} else if (recv_msg_type == MessageType.EXECUTE_FAILURE)
+	} else if (recv_msg_type == EXECUTE_FAILURE)
 	{
 			int reasonCode;
 			recv(server_fd, &reasonCode, sizeof(int), 0);
@@ -310,7 +458,7 @@ int rpcCall(char* name, int* argTypes, void** args)
 		close(server_fd);
 		return UNKNOW_MSG_TYPE_RESPONSE;
 	}
-     */
+    
     return 0;
 }
 
@@ -399,7 +547,7 @@ int rpcRegister(char* name, int* argTypes, skeleton f)
 	if(response_status == REGISTER_SUCCESS)
 	{
 		// If the binder register is successful, add the skeleton to map
-    struct serverFuncKey key(std::string(name), argTypes);
+        struct serverFuncKey key(std::string(name), argTypes);
 		server_functions[key] = f;
 		std::cout << "out1" << std::endl;
 		return response_code;
@@ -412,101 +560,99 @@ int rpcRegister(char* name, int* argTypes, skeleton f)
 
 int rpcExecute()
 {
-    /*
-	fd_set master;      // Master file descriptor
-	fd_set read_fds;    // Temp file descriptor
-	int fdmax;          // Max number of file descirptors
 
-	int listener;       // Port listener
-	struct sockaddr_storage remoteaddr; // connector's address information
-	socklen_t addrlen;                  // Address length
+    fd_set master;      // Master file descriptor
+    fd_set read_fds;    // Temp file descriptor
+    int fdmax;          // Max number of file descirptors
 
-	struct addrinfo hints, *ai, *p;     // Address info
-	int rv;             // Result from getaddressinfo
-	int ONE = 1;
+    int listener;       // Port listener
+    struct sockaddr_storage remoteaddr; // connector's address information
+    socklen_t addrlen;                  // Address length
 
-	// clear the master and temp sets
-	FD_ZERO(&master);
-	FD_ZERO(&read_fds);
+    struct addrinfo hints, *ai;     // Address info
+    int rv;             // Result from getaddressinfo
+    int ONE = 1;
 
-	// Set the address info
-	memset(&hints, 0, sizeof hints);
-	hints.ai_family = AF_UNSPEC;
-	hints.ai_socktype = SOCK_STREAM;
-	hints.ai_flags = AI_PASSIVE; // use my IP
+    // clear the master and temp sets
+    FD_ZERO(&master);
+    FD_ZERO(&read_fds);
 
-	// Get address info
-	if ((rv = getaddrinfo(NULL, "0", &hints, &ai)) != 0)
-		return EXECUTE_ADDRINFO_ERROR;
+    // Set the address info
+    memset(&hints, 0, sizeof hints);
+    hints.ai_family = AF_UNSPEC;
+    hints.ai_socktype = SOCK_STREAM;
+    hints.ai_flags = AI_PASSIVE; // use my IP
 
-
-	listener = socket(ai->ai_family, ai->ai_socktype, ai->ai_protocol);
-	if(listener < 0)
-		return EXECUTE_SOCKET_OPEN_FAILURE;
-
-	setsockopt(listener, SOL_SOCKET, SO_REUSEADDR, &ONE, sizeof(int));
-	if(bind(listener, ai->ai_addr, ai->ai_addrlen) < 0)
-		return EXECUTE_SOCKET_BIND_FAILURE;
-
-	// Address info is no longer needed
-	freeaddrinfo(ai);
-
-	// Allow 5 connections from client
-	listen(listener, RPC_BACKLOG);
-
-	// add the listener to the master set
-	FD_SET(listener, &master);
-
-	// keep track of the biggest file descriptor
-	fdmax = listener;
-
-	pthread_t terminate_listener;
-
-	// listen for binder termination
-	terminate = false;
-	pthread_create(&terminate_listener, NULL, wait_terminate, NULL);
+    // Get address info
+    if ((rv = getaddrinfo(NULL, "0", &hints, &ai)) != 0)
+        return EXECUTE_ADDRINFO_ERROR;
 
 
-	// Server main loop
-	while(!terminate) {
-		// copy master
-		read_fds = master;
-		if (select(fdmax+1, &read_fds, NULL, NULL, NULL) < 0)
-			return EXECUTE_SELECTION_FAILURE;
+    listener = socket(ai->ai_family, ai->ai_socktype, ai->ai_protocol);
+    if(listener < 0)
+        return EXECUTE_SOCKET_OPEN_FAILURE;
 
-		// Iterate through the connectons
-		for(int index = 0; index < fdmax+1; index++)
-		{
-		    if (FD_ISSET(index, &read_fds))
-				{
-					if (index == listener)
-					{
-					    // New connection
-					    addrlen = sizeof remoteaddr;
-					    int newfd = accept(listener, (struct sockaddr *)&remoteaddr, &addrlen);
-							FD_SET(newfd, &master);     // Add new address to master
-							if (newfd > fdmax)         // keep track of the max
-								fdmax = newfd;
-		        } else {
-								// Create a new thread to handle the client's request so that it
-								// wont be blocking
-								pthread_t client_thread;
-								alt_thread_count(1);
-								pthread_create(&client_thread, NULL, client_request_handler, (void*) &index);
-		        }
-		    }
-		}
-	}
+    setsockopt(listener, SOL_SOCKET, SO_REUSEADDR, &ONE, sizeof(int));
+    if(bind(listener, ai->ai_addr, ai->ai_addrlen) < 0)
+        return EXECUTE_SOCKET_BIND_FAILURE;
 
-	while(thread_count < 0){}
+    // Address info is no longer needed
+    freeaddrinfo(ai);
 
-	int msg_type = reasonCode.REQUEST_SUCCESS;
-	send(binder_socket_fd, &msg_type, sizeof(MessageType), 0);
-	close(binder_socket_fd);
+    // Allow 5 connections from client
+    listen(listener, RPC_BACKLOG);
 
-	return msg_type;
-     */
-	return 0;
+    // add the listener to the master set
+    FD_SET(listener, &master);
+
+    // keep track of the biggest file descriptor
+    fdmax = listener;
+
+    pthread_t terminate_listener;
+
+    // listen for binder termination
+    terminate = false;
+    pthread_create(&terminate_listener, NULL, wait_terminate, NULL);
+
+
+    // Server main loop
+    while(!terminate) {
+        // copy master
+        read_fds = master;
+        if (select(fdmax+1, &read_fds, NULL, NULL, NULL) < 0)
+            return EXECUTE_SELECTION_FAILURE;
+
+        // Iterate through the connectons
+        for(int index = 0; index < fdmax+1; index++)
+        {
+            if (FD_ISSET(index, &read_fds))
+                {
+                    if (index == listener)
+                    {
+                        // New connection
+                        addrlen = sizeof remoteaddr;
+                        int newfd = accept(listener, (struct sockaddr *)&remoteaddr, &addrlen);
+                            FD_SET(newfd, &master);     // Add new address to master
+                            if (newfd > fdmax)         // keep track of the max
+                                fdmax = newfd;
+                } else {
+                    // Create a new thread to handle the client's request so that it
+                    // wont be blocking
+                    pthread_t client_thread;
+                    alt_thread_count(1);
+                    pthread_create(&client_thread, NULL, client_request_handler, (void*) &index);
+                }
+            }
+        }
+    }
+
+    while(thread_count < 0){}
+
+    int msg_type = REQUEST_SUCCESS;
+    send(binder_socket_fd, &msg_type, sizeof(MessageType), 0);
+    close(binder_socket_fd);
+
+    return msg_type;
 }
 
 int rpcTerminate()
@@ -526,159 +672,4 @@ int rpcTerminate()
 	return status;
      */
 	return 0;
-}
-
-// Wait for binder to sent terminate signal
-void* wait_terminate(void* arg)
-{
-    /*
-	// Format TERMINATE
-	for(;;){
-		int msg_type;
-		recv(binder_socket_fd, &msg_type, sizeof(MessageType), 0);
-		if(msg_type == MessageType.TERMINATE)
-		{
-			terminate = true;
-			pthread_exit(NULL);
-		}
-	}
-     */
-    return 0;
-}
-
-void* client_request_handler(void* arg)
-{
-    /*
-	// Increase the thread count
-	alt_thread_count(1);
-
-	int client_fd = *(int*) arg;
-	int msg_type;
-	int msg_length;
-	int function_name[DEFAULT_CHAR_ARR_SIZE];
-
-	recv(client_fd, &msg_length, sizeof(int), 0);
-	recv(client_fd, &msg_type, sizeof(MessageType), 0);
-
-	//func_name_length + 1 + arg_types_length * 4 + arg_size;
-	// Get the function name
-	recv(client_fd, function_name, DEFAULT_CHAR_ARR_SIZE, 0);
-
-	int arg_size_tot = msg_length - DEFAULT_CHAR_ARR_SIZE;
-	int *client_args = (int*) malloc(arg_size_tot);
-	recv(client_fd, client_args, arg_size_tot, MSG_WAITALL);
-
-	// Get the number of args
-	int arg_types_length = get_arg_length(client_args);
-
-	int *arg_types = (int*) malloc(arg_types_length * 4);
-	void** args = (void**) malloc(arg_types_length * sizeof(void*));
-	void* args_index = client_args + arg_types_length;
-
-	for (int index = 0; index < arg_types_length; index++)
-    {
-        //see what type/len of arg we're dealing with
-        int arg_type = get_arg_type(argTypes[index]);
-        int arg_type_size = size_of_type(arg_type);
-        int arr_size = get_arg_length(argTypes[index]);
-
-        //temp holder
-        void* args_holder = (void*) malloc(arr_size * arg_type_size);
-
-        //copy the address
-        *(args[index]) = args_holder;
-
-        //copy the contents of array into temp holder
-        for (int j = 0; j < arr_size; j++)
-        {
-            void* temp = (char*) args_holder + j * arg_type_size;
-            memcpy(temp, argsIndex, arg_type_size);
-            argsIndex = (void*) ((char*) argsIndex + arg_type_size);
-        }
-    }
-
-		int result = MessageType.EXECUTE_FAILURE;
-		skeleton s = server_functions[serverFuncKey(function_name, arg_types)];
-		if(s != NULL) {
-			result = s(arg_types, args);
-		}
-
-		if(result == MessageType.EXECUTE_SUCCESS)
-		{
-			int ret_msg_type = MessageType.EXECUTE_SUCCESS;
-			send(client_fd, &msg_len, sizeof(int), 0);
-			send(client_fd, &ret_msg_type, sizeof(MessageType), 0);
-			send(client_fd, function_name, sizeof(function_name), 0);
-			send(client_fd, arg_types, arg_types_length * 4, 0);
-
-			for(int arg = 0; arg < arg_types_length; arg++)
-			{
-				int arg_type = get_arg_type(argTypes[args]);
-				int arg_length = get_arg_length(argTypes[args]);
-				int arg_size = size_of_type(arg_type);
-				send(client_fd, (void*) args[arg], arg_length * arg_size, 0);
-			}
-
-		} else
-		{
-			// EXECUTE_FAILURE, reasonCode
-			int ret_msg_type = MessageType.EXECUTE_FAILURE;
-			int ret_msg_length = sizeof(int);
-			send(client_fd, &ret_msg_length, sizeof(int), 0);
-			send(client_fd, &ret_msg_type, sizeof(MessageType), 0);
-			send(client_fd, &result, sizeof(int), 0);
-		}
-
-		close(client_fd);
-		free(args);
-		free(arg_types);
-		free(client_args);
-
-		alt_thread_count(-1);
-		pthread_exit();
-     */
-    return 0;
-}
-
-int socket_connect(char* host_name, char* port_num)
-{
-    /*
-	int socket_fd;
-	// Make connection to binder
-	struct addrinfo hints, *ai;
-
-	// Get the address info of binder
-	memset(&hints, 0, sizeof hints);
-	hints.ai_family = AF_UNSPEC;
-	hints.ai_socktype = SOCK_STREAM;
-	getaddrinfo(host_name, port_num, &hints, &ai);
-
-	// Open socket
-	socket_fd = socket(ai->ai_family, ai->ai_socktype, ai->ai_protocol);
-	if (socket_fd < 0)
-		return SOCKET_OPEN_FAILURE;
-
-	// Make connection
-	if (connect(socket_fd, ai->ai_addr, ai->ai_addrlen) < 0)
-		return SOCKET_BIND_FAILURE;
-
-	return socket_fd;
-     */
-    return 0;
-}
-
-int get_arg_length(int* arg_type)
-{
-	// The length is the last two values
-	int length = (*arg_type) & 0x0000FFFF;
-	if(length == 0)
-	 	return 1;
-	return length;
-}
-
-int get_arg_type(int* arg_type)
-{
-	// Second byte is the type
-	int type = (*arg_type) & 0x00FF0000;
-	return type >> 16;
 }
