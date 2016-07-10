@@ -53,12 +53,12 @@ std::map<FuncSignature*, skeleton> server_functions;
 int binder_socket_fd;
 int rpc_sock_fd;
 
-// Server execute terminating condition
-bool terminate;
-
 // Thread mutex lock
 int thread_count;
 pthread_mutex_t thread_count_lock;
+
+// terminate
+bool terminate;
 
 // Inc/Dec thread count
 void alt_thread_count(int count)
@@ -134,18 +134,18 @@ int socket_connect(char* host_name, char* port_num)
 void* wait_terminate(void* arg)
 {
     for(;;){
+        int msg_length;
         int msg_type;
+        recv(binder_socket_fd, &msg_length, sizeof(int), 0);
         recv(binder_socket_fd, &msg_type, sizeof(MessageType), 0);
        
         // Terminate
         if(msg_type == TERMINATE)
-        {
-            terminate = true;
             break;
-        }
     }
     
     // Close the server socket, and exit thread
+    terminate = true;
     close(rpc_sock_fd);
     pthread_exit(NULL);
     return 0;
@@ -535,39 +535,25 @@ int rpcRegister(char* name, int* argTypes, skeleton f)
 
 int rpcExecute()
 {
-    fd_set master;      // Master file descriptor
-    fd_set read_fds;    // Temp file descriptor
-    int fdmax;          // Max number of file descirptors
-
     struct sockaddr_storage remoteaddr; // connector's address information
     socklen_t addrlen;                  // Address length
-
-    // clear the master and temp sets
-    FD_ZERO(&master);
-    FD_ZERO(&read_fds);
-
-    // add the listener to the master set
-    FD_SET(rpc_sock_fd, &master);
-
-    // keep track of the biggest file descriptor
-    fdmax = rpc_sock_fd;
 
     pthread_t terminate_listener;
 
     // listen for binder termination
-    terminate = false;
     pthread_create(&terminate_listener, NULL, wait_terminate, NULL);
 
-
     // Server main loop
+    terminate = false;
     while(!terminate) {
         int newfd = accept(rpc_sock_fd, (struct sockaddr *)&remoteaddr, &addrlen);
-        pthread_t client_thread;
-        pthread_create(&client_thread, NULL, client_request_handler, (void*) &newfd);
-        
+        if(newfd >=0 ){
+            pthread_t client_thread;
+            pthread_create(&client_thread, NULL, client_request_handler, (void*) &newfd);
+        }
     }
     
-    while(thread_count < 0){}
+    while(thread_count > 0){}
 
     close(binder_socket_fd);
     return SUCCESS;
