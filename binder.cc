@@ -17,14 +17,12 @@
 #include "binder.h"
 #include "message.h"
 
-using namespace std;
-
 
 struct FuncSignature {
-    string name;
+    std::string name;
     int* argTypes;
     int argSize;
-    FuncSignature(string name, int* argTypes, int argSize) : name(name), argTypes(argTypes), argSize(argSize) {}
+    FuncSignature(std::string name, int* argTypes, int argSize) : name(name), argTypes(argTypes), argSize(argSize) {}
 };
 
 bool operator == (const FuncSignature &l, const FuncSignature &r) {
@@ -44,10 +42,10 @@ bool operator == (const FuncSignature &l, const FuncSignature &r) {
 }
 
 struct ServerLoc {
-    string serverId;
+    std::string serverId;
     int port;
     int socketFd;
-    ServerLoc(string serverId, int port, int socketFd) : serverId(serverId), port(port), socketFd(socketFd) {}
+    ServerLoc(std::string serverId, int port, int socketFd) : serverId(serverId), port(port), socketFd(socketFd) {}
 };
 
 bool operator == (const ServerLoc &l, const ServerLoc &r) {
@@ -55,8 +53,8 @@ bool operator == (const ServerLoc &l, const ServerLoc &r) {
 }
 
 bool terminating;
-map <FuncSignature*, vector<ServerLoc *> > funcDict;
-vector<ServerLoc *> serverQueue;
+std::map <FuncSignature*, std::vector<ServerLoc *> > funcDict;
+std::vector<ServerLoc *> serverQueue;
 
 void registerServer(ServerLoc* location) {
     for (int i = 0; i < serverQueue.size(); i++) {
@@ -68,13 +66,13 @@ void registerServer(ServerLoc* location) {
     serverQueue.push_back(location);
 }
 
-int registerFunc(string name, int* argTypes, int argSize, string serverId, int port, int socketFd) {
+int registerFunc(std::string name, int* argTypes, int argSize, std::string serverId, int port, int socketFd) {
     bool found = false;
     ServerLoc *location = new ServerLoc(serverId, port, socketFd);
     FuncSignature *func = new FuncSignature(name, argTypes, argSize);
 
     // Look up function in the dictionary
-    for (map<FuncSignature *, vector<ServerLoc *> >::iterator it = funcDict.begin(); it != funcDict.end(); it ++) {
+    for (std::map<FuncSignature *, std::vector<ServerLoc *> >::iterator it = funcDict.begin(); it != funcDict.end(); it ++) {
         if (*func == *(it->first)) {
             found = true;
             for (int i = 0; i < it->second.size(); i++) {
@@ -121,8 +119,8 @@ void handleRegisterRequest(int clientSocketFd, int msgLength) {
     memcpy(funcName, buffer + CHAR_ARR_SIZE + INT_SIZE, CHAR_ARR_SIZE);
     memcpy(argTypes, buffer + 2 * CHAR_ARR_SIZE + INT_SIZE, argSize);
 
-    string name(funcName);
-    string serverId(server);
+    std::string name(funcName);
+    std::string serverId(server);
 
     status = registerFunc(name, argTypes, argSize, serverId, port, clientSocketFd);
     if (status == 1) {
@@ -134,13 +132,13 @@ void handleRegisterRequest(int clientSocketFd, int msgLength) {
     sendMessage(clientSocketFd, 3 * INT_SIZE, REGISTER_SUCCESS, responseMsg);
 }
 
-ServerLoc *lookupAvailableServer(string name, int *argTypes, int argSize) {
+ServerLoc *lookupAvailableServer(std::string name, int *argTypes, int argSize) {
     ServerLoc *selectedServer = NULL;
     FuncSignature *func = new FuncSignature(name, argTypes, argSize);
 
-    for (map<FuncSignature *, vector<ServerLoc *> >::iterator it = funcDict.begin(); it != funcDict.end(); it ++) {
+    for (std::map<FuncSignature *, std::vector<ServerLoc *> >::iterator it = funcDict.begin(); it != funcDict.end(); it ++) {
         if (*func == *(it->first)) {
-            vector<ServerLoc *> availServers = it->second;
+            std::vector<ServerLoc *> availServers = it->second;
 
             // Look up server queue in round robin fashion
             for (int i = 0; i < serverQueue.size(); i++) {
@@ -181,7 +179,7 @@ void handleLocationRequest(int clientSocketFd, int msgLength) {
     memcpy(funcName, buffer, CHAR_ARR_SIZE);
     memcpy(argTypes, buffer + CHAR_ARR_SIZE, argSize);
 
-    string name(funcName);
+    std::string name(funcName);
 
     ServerLoc * availServer;
     availServer = lookupAvailableServer(name, argTypes, argSize);
@@ -215,9 +213,9 @@ void removeServer(int closingSocketFd) {
             serverQueue.erase(serverQueue.begin() + i);
         }
     }
-    for (map<FuncSignature *, vector<ServerLoc *> >::iterator it = funcDict.begin(); it != funcDict.end(); it++) {
-        vector<ServerLoc *> servers = it->second;
-        for (vector<ServerLoc *>::iterator it2 = servers.begin(); it2 != servers.end(); it2++) {
+    for (std::map<FuncSignature *, std::vector<ServerLoc *> >::iterator it = funcDict.begin(); it != funcDict.end(); it++) {
+        std::vector<ServerLoc *> servers = it->second;
+        for (std::vector<ServerLoc *>::iterator it2 = servers.begin(); it2 != servers.end(); it2++) {
             if (closingSocketFd == (*it2)->socketFd) {
                 delete *it2;
                 servers.erase(it2);
@@ -233,9 +231,9 @@ void cleanup() {
     }
     serverQueue.clear();
 
-    for (map<FuncSignature *, vector<ServerLoc *> >::iterator it = funcDict.begin(); it != funcDict.end(); it ++) {
+    for (std::map<FuncSignature *, std::vector<ServerLoc *> >::iterator it = funcDict.begin(); it != funcDict.end(); it ++) {
         delete it->first;
-        vector<ServerLoc *> v = it->second;
+        std::vector<ServerLoc *> v = it->second;
         for (std::vector<ServerLoc *>::iterator v_it = v.begin() ; v_it != v.end(); v_it++) {
             delete *v_it;
         }
@@ -290,7 +288,7 @@ int main() {
 
     socketFd = socket(AF_INET, SOCK_STREAM, 0);
     if (socketFd < 0) {
-        cerr << "Error: cannot open a socket" << endl;
+        std::cerr << "Error: cannot open a socket" << std::endl;
         return 1;
     }
 
@@ -301,12 +299,12 @@ int main() {
     svrAddr.sin_port = htons(0);
 
     if (bind(socketFd, (struct sockaddr *)&svrAddr, sizeof(svrAddr)) < 0) {
-        cerr << "Error: cannot bind socket" << endl;
+        std::cerr << "Error: cannot bind socket" << std::endl;
         return 1;
     }
 
     if (listen(socketFd, 5) < 0) {
-        cerr << "Error: cannot listen to socket" << endl;
+        std::cerr << "Error: cannot listen to socket" << std::endl;
         return 1;
     }
 
@@ -316,8 +314,8 @@ int main() {
     getsockname(socketFd, (struct sockaddr *)&svrAddr, &size);
     gethostname(server_name, 128);
 
-    cout << "BINDER_ADDRESS " << server_name << endl;
-    cout << "BINDER_PORT " << ntohs(svrAddr.sin_port) << endl;
+    std::cout << "BINDER_ADDRESS " << server_name << std::endl;
+    std::cout << "BINDER_PORT " << ntohs(svrAddr.sin_port) << std::endl;
 
     FD_ZERO(&masterFds);
     FD_SET(socketFd, &masterFds);
@@ -327,7 +325,7 @@ int main() {
         readFds = masterFds;
 
         if (select(fdmax+1, &readFds, NULL, NULL, NULL) < 0) {
-            cerr << "Error: fail to select" << endl;
+            std::cerr << "Error: fail to select" << std::endl;
             return 1;
         }
 
@@ -336,8 +334,9 @@ int main() {
                 if (i == socketFd) {
                     socklen_t size = sizeof(clntAddr);
                     int newFd = accept(socketFd, (struct sockaddr *)&clntAddr, &size);
+                    std::cout << "found new connection" << std::endl;
                     if (newFd < 0) {
-                        cerr << "Error: cannot establish new connection" << endl;
+                        std::cerr << "Error: cannot establish new connection" << std::endl;
                         return 1;
                     }
 

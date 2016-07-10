@@ -15,14 +15,17 @@
 #include <arpa/inet.h>
 #include <sys/wait.h>
 #include <signal.h>
+#include <iostream>
 #include <map>
+#include <thread>
+#include <pthread.h>
 
 // Structs
 struct serverFuncKey {
 	char* _name;
 	int* _argTypes;
 
-	void serverFuncKey(char* name, int* argTypes)
+    serverFuncKey(char* name, int* argTypes)
 	{
 		_name = name;
 		_argTypes = argTypes;
@@ -52,7 +55,7 @@ void alt_thread_count(int count)
 }
 
 // Map
-map<serverFuncKey, skeleton> server_functions;
+std::map<serverFuncKey, skeleton> server_functions;
 
 int size_of_type(int type)
 {
@@ -71,55 +74,111 @@ int size_of_type(int type)
 	return -1;
 }
 
-int rpcrpcInit()
+
+/*
+ * Connection to binder via env varible
+ * if connection is successful, binder_socket_fd will be set and success code
+ * is returned
+ * else, error code is returned
+ */
+int connect_binder()
 {
+    std::cout << "in connect_binder" << std::endl;
+    // Check if binder is already connected
+    std::cout <<binder_socket_fd << std::endl;
+    if (binder_socket_fd > 0)
+        return SUCCESS;
+
+    // Get Binder's address & port
+    char* binder_address = getenv(BINDER_ADDRESS_S);
+    char* binder_port = getenv(BINDER_PORT_S);
+    
+    std::cout << "binder address: " << binder_address << std::endl;
+    std::cout << "binder port: " << binder_port << std::endl;
+
+    // Validates that the address and port is set
+    if(binder_address == NULL)
+        return INIT_BINDER_ADDRESS_NOT_FOUND;
+    else if(binder_port == NULL)
+        return INIT_BINDER_PORT_NOT_FOUND;
+
+    // Make connection to binder
+    struct addrinfo binder_hints, *binder_ai;
+
+    // Get the address info of binder
+    memset(&binder_hints, 0, sizeof binder_hints);
+    binder_hints.ai_family = AF_UNSPEC;
+    binder_hints.ai_socktype = SOCK_STREAM;
+    getaddrinfo(binder_address, binder_port, &binder_hints, &binder_ai);
+
+    // Open socket
+    binder_socket_fd = socket(binder_ai->ai_family, binder_ai->ai_socktype, binder_ai->ai_protocol);
+    std::cout << "binder_socket_fd: " <<binder_socket_fd << std::endl;
+    if (binder_socket_fd < 0)
+        return INIT_BINDER_SOCKET_OPEN_FAILURE;
+
+    // Make connection
+    if (connect(binder_socket_fd, binder_ai->ai_addr, binder_ai->ai_addrlen) < 0)
+        return INIT_BINDER_SOCKET_BIND_FAILURE;
+    
+    std::cout << "connected" << std::endl;
+
+    return SUCCESS;
+}
+
+
+int rpcInit()
+{
+    std::cout << "in init"<< std::endl;
 	// Create socket for client
 	struct addrinfo rpc_hints, *rpc_ai;	// Address info
 
 	// Set the address info
 	memset(&rpc_hints, 0, sizeof rpc_hints);
-	hints.ai_family = AF_UNSPEC;
-	hints.ai_socktype = SOCK_STREAM;
-	hints.ai_flags = AI_PASSIVE;
+	rpc_hints.ai_family = AF_UNSPEC;
+	rpc_hints.ai_socktype = SOCK_STREAM;
+	rpc_hints.ai_flags = AI_PASSIVE;
 
 	// Get address info
 	getaddrinfo(NULL, "0", &rpc_hints, &rpc_ai);
 	rpc_sock_fd = socket(rpc_ai->ai_family, rpc_ai->ai_socktype, rpc_ai->ai_protocol);
+    std::cout << "rpc_sock_fd: " << rpc_sock_fd << std::endl;
 	if (rpc_sock_fd < 0)
 	{
 		return INIT_LOCAL_SOCKET_OPEN_FAILURE;
 	}
-	if (bind(rpc_sock, rpc_ai->ai_addr, rpc_ai->ai_addrlen))
+	if (bind(rpc_sock_fd, rpc_ai->ai_addr, rpc_ai->ai_addrlen))
 	{
 		return INIT_LOCAL_SOCKET_BIND_FAILURE;
 	}
 
 	// start listening
-	listen(rpc_sock, RPC_BACKLOG);
+	listen(rpc_sock_fd, RPC_BACKLOG);
 
 	// Store rpc info
-	struct sockaddr_in sock_addr;
-	socklen_t sock_addr_len = sizeof sock_addr;
+	//struct sockaddr_in sock_addr;
+	//socklen_t sock_addr_len = sizeof sock_addr;
 
 	// Get rpc sock name
-	rpc_socket_id = new char[128];
-	getnameinfo((struct sockaddr*)&sock_addr, &lengths, rpc_socket_id, 128, NULL, 0, 0);
+	//rpc_socket_id = char[128];
+	//getnameinfo((struct sockaddr*)&sock_addr, &sock_addr_len, rpc_socket_id, 128, NULL, 0, 0);
 
 	// Get the rpc dock port
-	getsockname(rpc_sock, (struct sockaddr* ) &sock_addr, &sock_addr_len);
-	rpc_sock_port = ntohs(sock_addr.sin_port);
+	//getsockname(rpc_sock, (struct sockaddr* ) &sock_addr, &sock_addr_len);
+	//rpc_sock_port = ntohs(sock_addr.sin_port);
 
 	// Connect to binder
-	int binder_status_code = binderConnection();
-	if (binder_status_code != SUCCES)
+	int binder_status_code = connect_binder();
+	if (binder_status_code != SUCCESS)
 		return binder_status_code;
+    std::cout << "init complete" << std::endl;
 	return SUCCESS;
 }
 
 // Called by client
 int rpcCall(char* name, int* argTypes, void** args)
 {
-
+    /*
 	// Connect to binder
 	// Get Binder's address & port
 	char* binder_address = getenv(BINDER_ADDRESS_S);
@@ -248,6 +307,8 @@ int rpcCall(char* name, int* argTypes, void** args)
 		close(server_fd);
 		return UNKNOW_MSG_TYPE_RESPONSE;
 	}
+     */
+    return 0;
 }
 
 int rpcCacheCall(char* name, int* argTypes, void** args)
@@ -257,7 +318,7 @@ int rpcCacheCall(char* name, int* argTypes, void** args)
 
 int rpcRegister(char* name, int* argTypes, skeleton f)
 {
-
+    
 	// Calls the binder, informing it that a server procedure with the
 	// indicated name and list of argument types is available at this server
 	if(binder_socket_fd < 0)
@@ -277,7 +338,7 @@ int rpcRegister(char* name, int* argTypes, skeleton f)
 	// The format will be:
 	// char(server_id'\0')int(port)char(function_name'\0')int_arr(arg_types)
 	int host_name_length = sizeof(host_name)/sizeof(char);
-	int func_name_length = string(name).size();
+    int func_name_length = std::string(name).size();
 	int arg_types_length = 0;
 	while(argTypes[arg_types_length])
 		arg_types_length++;
@@ -334,6 +395,7 @@ int rpcRegister(char* name, int* argTypes, skeleton f)
 
 int rpcExecute()
 {
+    /*
 	fd_set master;      // Master file descriptor
 	fd_set read_fds;    // Temp file descriptor
 	int fdmax;          // Max number of file descirptors
@@ -426,10 +488,13 @@ int rpcExecute()
 	close(binder_socket_fd);
 
 	return msg_type;
+     */
+	return 0;
 }
 
 int rpcTerminate()
 {
+    /*
 	// call binder to inform servcers to terminate
 	// if no binder is created, then return with warning
 	if(binder_socket_fd < 0)
@@ -442,54 +507,14 @@ int rpcTerminate()
 	// Close binder socket
 	close(binder_socket_fd);
 	return status;
-}
-
-/*
-* Connection to binder via env varible
-* if connection is successful, binder_socket_fd will be set and success code
-* is returned
-* else, error code is returned
-*/
-int binderConnection()
-{
-	// Check if binder is already connected
-	if (binder_socket_fd >= 0)
-		return SUCCESS;
-
-	// Get Binder's address & port
-	char* binder_address = getenv(BINDER_ADDRESS_S);
-	char* binder_port = getenv(BINDER_PORT_S);
-
-	// Validates that the address and port is set
-	if(binder_address == NULL)
-		return INIT_BINDER_ADDRESS_NOT_FOUND;
-	else if(binder_port == NULL)
-		return INIT_BINDER_PORT_NOT_FOUND;
-
-	// Make connection to binder
-	struct addrinfo binder_hints, *binder_ai;
-
-	// Get the address info of binder
-	memset(&binder_hints, 0, sizeof binder_hints);
-	hints.ai_family = AF_UNSPEC;
-	hints.ai_socktype = SOCK_STREAM;
-	getaddrinfo(binder_address, binder_port, &binder_hints, &binder_ai);
-
-	// Open socket
-	binder_socket_fd = socket(binder_ai->ai_family, binder_ai->ai_socktype, binder_ai->ai_protocol);
-	if (binder_socket_fd < 0)
-		return INIT_BINDER_SOCKET_OPEN_FAILURE;
-
-	// Make connection
-	if (connect(binder_socket_fd, binder_ai->ai_addr, binder_ai->ai_addrlen) < 0)
-		return INIT_BINDER_SOCKET_BIND_FAILURE;
-
-	return SUCCESS;
+     */
+	return 0;
 }
 
 // Wait for binder to sent terminate signal
 void* wait_terminate(void* arg)
 {
+    /*
 	// Format TERMINATE
 	for(;;){
 		int msg_type;
@@ -500,10 +525,13 @@ void* wait_terminate(void* arg)
 			pthread_exit(NULL);
 		}
 	}
+     */
+    return 0;
 }
 
 void* client_request_handler(void* arg)
 {
+    /*
 	// Increase the thread count
 	alt_thread_count(1);
 
@@ -591,6 +619,8 @@ void* client_request_handler(void* arg)
 
 		alt_thread_count(-1);
 		pthread_exit();
+     */
+    return 0;
 }
 
 /*
@@ -600,6 +630,7 @@ void* client_request_handler(void* arg)
 */
 int sendMessage(int socket_fd, unsigned int msg_len, MessageType msg_type, char msg_data[])
 {
+    /*
     // Format of the data is
     // int(msg_length)MessageType(type)char(msg)
     // so the total would be 4 byte + 4 byte + msg_len
@@ -626,12 +657,13 @@ int sendMessage(int socket_fd, unsigned int msg_len, MessageType msg_type, char 
 
 			have_sent += send_len;
 		}
-
-		return SUCCESS;
+     */
+    return SUCCESS;
 }
 
 int recieveMessage_int(int socket_fd)
 {
+    /*
 	// Used to recieve status code from socket_fd
 	// a 4 byte interget status code
 	char ret[4];
@@ -641,10 +673,13 @@ int recieveMessage_int(int socket_fd)
 
 	// Convert the value to int
 	return atoi(ret);
+     */
+    return 0;
 }
 
-int recieve_msg(int socket_fd, int expect_len; char buf[])
+int recieve_msg(int socket_fd, int expect_len, char buf[])
 {
+    /*
 	// Reads until expect_len is reached
 	char* ptr = buf;
 	while(expect_len > 0) {
@@ -657,12 +692,13 @@ int recieve_msg(int socket_fd, int expect_len; char buf[])
 		expect_len -= rcv_len;
 		ptr += rcv_len;
 	}
-
+     */
 	return SUCCESS;
 }
 
 int socket_connect(char* host_name, char* port_num)
 {
+    /*
 	int socket_fd;
 	// Make connection to binder
 	struct addrinfo hints, *ai;
@@ -683,6 +719,8 @@ int socket_connect(char* host_name, char* port_num)
 		return SOCKET_BIND_FAILURE;
 
 	return socket_fd;
+     */
+    return 0;
 }
 
 int get_arg_length(int* arg_type)
