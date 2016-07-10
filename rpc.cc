@@ -395,10 +395,10 @@ int rpcCall(char* name, int* argTypes, void** args)
         std::cout << "receved server_port: " << server_port << std::endl;
 	} else if (res_type == LOC_FAILURE)
 	{
-        std::cout << "error" << server_port << std::endl;
 		// If failure, get the reason code and return it
 		int reason;
 		recv(binder, &reason, sizeof(int), 0);
+        std::cout << "reason " << reason << std::endl;
 		close(binder);
 		return reason;
 	} else

@@ -27,10 +27,12 @@ struct FuncSignature {
 };
 
 bool operator == (const FuncSignature &l, const FuncSignature &r) {
-    if (l.name == r.name && l.argSize == r.argSize) {
 
+    if (l.name == r.name && l.argSize == r.argSize) {
+        std::cout << "yes me" << std::endl;
         int i = 0;
         while (i < l.argSize) {
+            std::cout << "left: " << l.argTypes[i] << " right: " << r.argTypes[i] << std::endl;
             if (l.argTypes[i] != r.argTypes[i]) {
                 return false;
             }
@@ -116,7 +118,7 @@ void handleRegisterRequest(int clientSocketFd, int msgLength) {
     unsigned short port;
     char funcName[CHAR_ARR_SIZE];
     int argSize = ((msgLength - 2 * CHAR_ARR_SIZE - UNSIGNED_SHORT_SIZE)/ INT_SIZE);
-    int argTypes [argSize];
+    int *argTypes = new int[argSize];
 
     memcpy(server, buffer, CHAR_ARR_SIZE);
     memcpy(&port, buffer + CHAR_ARR_SIZE, UNSIGNED_SHORT_SIZE);
@@ -148,19 +150,28 @@ void handleRegisterRequest(int clientSocketFd, int msgLength) {
     std::cout << "reason: " << reason << std::endl;
     sendMessage(clientSocketFd, 3 * INT_SIZE, REGISTER_SUCCESS, responseMsg);
     std::cout << "done4" << std::endl;
+    
+    for (std::map<FuncSignature *, std::vector<ServerLoc *> >::iterator it = funcDict.begin(); it != funcDict.end(); it ++) {
+        std::cout << "func name: " << it->first->name << " size: " << it->first->argSize << std::endl;
+        std::cout << "func arg: " << it->first->argTypes[0] << std::endl;
+    }
 }
 
 ServerLoc *lookupAvailableServer(std::string name, int *argTypes, int argSize) {
     ServerLoc *selectedServer = NULL;
     FuncSignature *func = new FuncSignature(name, argTypes, argSize);
+    std::cout << "target func name: " << func->name << " size: " << func->argSize << std::endl;
 
     for (std::map<FuncSignature *, std::vector<ServerLoc *> >::iterator it = funcDict.begin(); it != funcDict.end(); it ++) {
+        std::cout << "func name: " << it->first->name << " size: " << it->first->argSize << std::endl;
         if (*func == *(it->first)) {
             std::vector<ServerLoc *> availServers = it->second;
+            std::cout << "found func" << std::endl;
 
             // Look up server queue in round robin fashion
             for (int i = 0; i < serverQueue.size(); i++) {
                 ServerLoc * server = serverQueue.front();
+                std::cout << "server host: " << server->serverId << "port: " << server->port << std::endl;
                 for (int j = 0; j < availServers.size(); j++) {
                     if (*server == *(availServers[j])) {
                         // found the first available server
@@ -179,6 +190,10 @@ ServerLoc *lookupAvailableServer(std::string name, int *argTypes, int argSize) {
 }
 
 void handleLocationRequest(int clientSocketFd, int msgLength) {
+    for (std::map<FuncSignature *, std::vector<ServerLoc *> >::iterator it = funcDict.begin(); it != funcDict.end(); it ++) {
+        std::cout << "func name: " << it->first->name << " size: " << it->first->argSize << std::endl;
+        std::cout << "func arg: " << it->first->argTypes[0] << std::endl;
+    }
     char buffer[msgLength];
     int status = receiveMessage(clientSocketFd, msgLength, buffer);
     if (status == RECEIVE_ERROR) {
@@ -191,11 +206,16 @@ void handleLocationRequest(int clientSocketFd, int msgLength) {
     }
 
     char funcName[CHAR_ARR_SIZE];
-    int argSize = ((msgLength - 2 * CHAR_ARR_SIZE - UNSIGNED_SHORT_SIZE) / INT_SIZE);
-    int argTypes [argSize];
+    int argSize = ((msgLength - CHAR_ARR_SIZE) / INT_SIZE);
+    int *argTypes = new int[argSize];
 
     memcpy(funcName, buffer, CHAR_ARR_SIZE);
-    memcpy(argTypes, buffer + CHAR_ARR_SIZE, argSize);
+    std::cout << "funcName " <<  funcName << std::endl;
+    memcpy(argTypes, buffer + CHAR_ARR_SIZE, argSize * INT_SIZE);
+    for(int i = 0; i < argSize; i++)
+    {
+        std::cout << "argTypes " <<  argTypes[i] << std::endl;
+    }
 
     std::string name(funcName);
 
