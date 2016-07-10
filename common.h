@@ -16,6 +16,7 @@
 
 
 #define INT_SIZE 4
+#define UNSIGNED_SHORT_SIZE 2
 #define CHAR_ARR_SIZE 128
 
 enum MessageType {

@@ -22,17 +22,19 @@
 
 // Structs
 struct serverFuncKey {
-	char* _name;
+    std::string _name;
 	int* _argTypes;
 
-    serverFuncKey(char* name, int* argTypes)
+    serverFuncKey(std::string name, int* argTypes)
 	{
 		_name = name;
 		_argTypes = argTypes;
 	}
-};
 
-bool operator < (const serverFuncKey& key1, const serverFuncKey& key2);
+    bool operator < (const serverFuncKey& foo1) const {
+        return _name.compare(foo1._name);
+    }
+};
 
 // Binder socket file descriptor
 int binder_socket_fd;
@@ -56,6 +58,7 @@ void alt_thread_count(int count)
 
 // Map
 std::map<serverFuncKey, skeleton> server_functions;
+//bool operator < (const serverFuncKey& key1, const serverFuncKey& key2);
 
 int size_of_type(int type)
 {
@@ -92,7 +95,7 @@ int connect_binder()
     // Get Binder's address & port
     char* binder_address = getenv(BINDER_ADDRESS_S);
     char* binder_port = getenv(BINDER_PORT_S);
-    
+
     std::cout << "binder address: " << binder_address << std::endl;
     std::cout << "binder port: " << binder_port << std::endl;
 
@@ -120,7 +123,7 @@ int connect_binder()
     // Make connection
     if (connect(binder_socket_fd, binder_ai->ai_addr, binder_ai->ai_addrlen) < 0)
         return INIT_BINDER_SOCKET_BIND_FAILURE;
-    
+
     std::cout << "connected" << std::endl;
 
     return SUCCESS;
@@ -318,8 +321,10 @@ int rpcCacheCall(char* name, int* argTypes, void** args)
 
 int rpcRegister(char* name, int* argTypes, skeleton f)
 {
-    
-	// Calls the binder, informing it that a server procedure with the
+
+    std::cout << "==========" << std::endl;
+    std::cout << "In rpc register" << std::endl;
+    // Calls the binder, informing it that a server procedure with the
 	// indicated name and list of argument types is available at this server
 	if(binder_socket_fd < 0)
 		return REGISTER_BINDER_DID_NOT_INITIATE;
@@ -328,68 +333,80 @@ int rpcRegister(char* name, int* argTypes, skeleton f)
 	// Get the local host name & port number
 	char host_name[DEFAULT_CHAR_ARR_SIZE];
 	gethostname(host_name, DEFAULT_CHAR_ARR_SIZE);
+    std::cout << "host name: " << host_name << std::endl;
+
 
 	struct sockaddr_in sock_ai;
 	socklen_t sock_len = sizeof(sock_ai);
 	getsockname(rpc_sock_fd, (struct sockaddr *)&sock_ai, &sock_len);
 	unsigned short host_port = ntohs(sock_ai.sin_port);
 
+    std::cout << "port host: " << host_port << std::endl;
 	// Generate the data
 	// The format will be:
 	// char(server_id'\0')int(port)char(function_name'\0')int_arr(arg_types)
 	int host_name_length = sizeof(host_name)/sizeof(char);
-    int func_name_length = std::string(name).size();
+    int func_name_length = (int)std::string(name).size();
 	int arg_types_length = 0;
 	while(argTypes[arg_types_length])
 		arg_types_length++;
 
-	int msg_length =  host_name_length + func_name_length + 4 + arg_types_length * 4;
-	char msg[msg_length];
-	int cur_index = 0;
-	// Add host_name'\0'
-	memcpy(msg, host_name, host_name_length);
-	cur_index += host_name_length;
-	memcpy(msg + cur_index, &TERMINATING_CHAR, sizeof(char));
-	cur_index += sizeof(char);
+    std::cout << "arg_types_length: " << arg_types_length << std::endl;
+    std::cout << "host_name_length: " << host_name_length << std::endl;
+    std::cout << "func_name_length: " << func_name_length << std::endl;
 
-	// Add port
-	memcpy(msg + cur_index, &host_port, sizeof(unsigned short));
-	cur_index += sizeof(unsigned short);
+		// int(size) + messagetype(type) + DEFAULT_CHAR_ARR_SIZE + unsigned short + DEFAULT_CHAR_ARR_SIZE + int_arr(arg_types)
+		int msg_length =  sizeof(int) + sizeof(MessageType) + DEFAULT_CHAR_ARR_SIZE*2 + sizeof(unsigned short) + arg_types_length * sizeof(int);
 
-	// Add function_name'\0'
-	memcpy(msg + cur_index, &name, func_name_length);
-	cur_index += func_name_length;
-	memcpy(msg + cur_index, &TERMINATING_CHAR, sizeof(char));
-	cur_index += sizeof(char);
+		send(binder_socket_fd, &msg_length, sizeof(int), 0);
+		std::cout << "sending message length " << msg_length << std::endl;
 
-	for(int i = 0; i < arg_types_length; i++)
-	{
-		memcpy(msg + cur_index, &argTypes[i], sizeof(int));
-		cur_index += sizeof(int);
-	}
+		int msg_type = REGISTER;
+    send(binder_socket_fd, &msg_type, sizeof(MessageType), 0);
+    std::cout << "sending message type " << msg_type << std::endl;
 
-	// Send the message
-	int status_code = sendMessgae(binder_socket_fd, msg_length, MessageType.REGISTER, msg);
-	if(status_code != SUCCESS)
-		return status_code;
+    // Sending serverid, port, function_name, arg_type
+    send(binder_socket_fd, host_name, DEFAULT_CHAR_ARR_SIZE, 0);
+    std::cout << "sending host_name " << host_name << std::endl;
 
-	// The first recieve is the REGISTER_SUCCESS / REGISTER_FAILURE
-	int binder_message_type_int = recieveMessage_int(binder_socket_fd);
-	MessageType binder_message_type = static_cast<MessageType>(binder_message_type_int);
+    send(binder_socket_fd, &host_port, sizeof(unsigned short), 0);
+    std::cout << "sending host_port " << host_port << std::endl;
+
+    send(binder_socket_fd, name, DEFAULT_CHAR_ARR_SIZE, 0);
+    std::cout << "sending function name " << name << std::endl;
+
+    std::cout << "arg length "<< arg_types_length * sizeof(int) << std::endl;
+    send(binder_socket_fd, argTypes, arg_types_length * sizeof(int), 0);
+    for(int i = 0; i < arg_types_length; i++)
+    {
+      std::cout << "sending argTypes " << argTypes[i] << std::endl;
+    }
+
+		int response_length;
+		recv(binder_socket_fd, &response_length, sizeof(int), 0);
+		std::cout << "response_length: " << response_length << std::endl;
+
+		// The first recieve is the REGISTER_SUCCESS / REGISTER_FAILURE
+    int response_status;
+    recv(binder_socket_fd, &response_status, sizeof(MessageType), 0);
+		std::cout << "response_status: " << response_status << std::endl;
 
 	// The second recieve is the additional status code
-	int binder_status_code = recieveMessage_int(binder_socket_fd);
+    int response_code;
+    recv(binder_socket_fd, &response_code, sizeof(int), 0);
+		std::cout << "response_code: " << response_code << std::endl;
 
-	if(binder_message_type == MessageType.REGISTER_SUCCESS)
+	if(response_status == REGISTER_SUCCESS)
 	{
 		// If the binder register is successful, add the skeleton to map
-		struct serverFuncKey key(name, argTypes);
-		serverFuncKey[key] = f;
-		return binder_status_code;
-	} else if(binder_message_type == MessageType.REGISTER_FAILURE){
-		return binder_status_code;
-	}
+    struct serverFuncKey key(std::string(name), argTypes);
+		server_functions[key] = f;
+		std::cout << "out1" << std::endl;
+		return response_code;
+	} else if(response_status == REGISTER_FAILURE)
+		return response_code;
 
+	std::cout << "out3" << std::endl;
 	return REGISTER_BINDER_RET_UNRECON_TYPE;
 }
 
@@ -621,79 +638,6 @@ void* client_request_handler(void* arg)
 		pthread_exit();
      */
     return 0;
-}
-
-/*
-*	Sends the message to socket fd with package size of 64 bytes each
-* returns SUCCESS is execution did not encounter error
-* else return the error status code
-*/
-int sendMessage(int socket_fd, unsigned int msg_len, MessageType msg_type, char msg_data[])
-{
-    /*
-    // Format of the data is
-    // int(msg_length)MessageType(type)char(msg)
-    // so the total would be 4 byte + 4 byte + msg_len
-    int data_len = msg_len + 8;
-    char data[data_len];
-
-    // copy the data length
-    memcpy(data, &msg_len, sizeof(int));
-    memcpy(data + INT_BYTE_PADDING, &msg_type, sizeof(MessageType));
-    memcpy(data + INT_BYTE_PADDING*2, msg_data, msg_len);
-
-		// Send the data through socket_fd
-		int have_sent = 0;
-		while(have_sent < data_len)
-		{
-			// Send data in chunks
-			int sent_len = send(socket_fd, data + have_sent, SOCKET_DATA_CHUNK_SIZE, 0);
-			if(send_len < 0)
-					return send_len;
-
-			// If 0 is returned then the sent is terminated
-			if(send_len == 0)
-				break;
-
-			have_sent += send_len;
-		}
-     */
-    return SUCCESS;
-}
-
-int recieveMessage_int(int socket_fd)
-{
-    /*
-	// Used to recieve status code from socket_fd
-	// a 4 byte interget status code
-	char ret[4];
-	int rev_status_code = recieve_msg(socket_fd, 4, ret);
-	if(rev_status_code != SUCCESS)
-	 	return rev_status_code;
-
-	// Convert the value to int
-	return atoi(ret);
-     */
-    return 0;
-}
-
-int recieve_msg(int socket_fd, int expect_len, char buf[])
-{
-    /*
-	// Reads until expect_len is reached
-	char* ptr = buf;
-	while(expect_len > 0) {
-		int rcv_len = recv(socket_fd, ptr, expect_len, 0);
-		if(rcv_len == 0)
-			break;
-		else if(rcv_len < 0)
-			return RECEIVE_ERROR;
-
-		expect_len -= rcv_len;
-		ptr += rcv_len;
-	}
-     */
-	return SUCCESS;
 }
 
 int socket_connect(char* host_name, char* port_num)

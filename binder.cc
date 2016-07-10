@@ -43,9 +43,9 @@ bool operator == (const FuncSignature &l, const FuncSignature &r) {
 
 struct ServerLoc {
     std::string serverId;
-    int port;
+    unsigned short port;
     int socketFd;
-    ServerLoc(std::string serverId, int port, int socketFd) : serverId(serverId), port(port), socketFd(socketFd) {}
+    ServerLoc(std::string serverId, unsigned short port, int socketFd) : serverId(serverId), port(port), socketFd(socketFd) {}
 };
 
 bool operator == (const ServerLoc &l, const ServerLoc &r) {
@@ -56,7 +56,8 @@ bool terminating;
 std::map <FuncSignature*, std::vector<ServerLoc *> > funcDict;
 std::vector<ServerLoc *> serverQueue;
 
-void registerServer(ServerLoc* location) {
+void registerServer(std::string serverId, unsigned short port, int socketFd) {
+    ServerLoc *location = new ServerLoc(serverId, port, socketFd);
     for (int i = 0; i < serverQueue.size(); i++) {
         if (*(serverQueue[i]) == *location) {
             // server is registered and in queue
@@ -66,7 +67,7 @@ void registerServer(ServerLoc* location) {
     serverQueue.push_back(location);
 }
 
-int registerFunc(std::string name, int* argTypes, int argSize, std::string serverId, int port, int socketFd) {
+int registerFunc(std::string name, int* argTypes, int argSize, std::string serverId, unsigned short port, int socketFd) {
     bool found = false;
     ServerLoc *location = new ServerLoc(serverId, port, socketFd);
     FuncSignature *func = new FuncSignature(name, argTypes, argSize);
@@ -90,7 +91,7 @@ int registerFunc(std::string name, int* argTypes, int argSize, std::string serve
     }
 
     // register server to queue
-    registerServer(location);
+    registerServer(serverId, port, socketFd);
     return 0;
 }
 
@@ -109,27 +110,41 @@ void handleRegisterRequest(int clientSocketFd, int msgLength) {
     }
 
     char server[CHAR_ARR_SIZE];
-    int port;
+    unsigned short port;
     char funcName[CHAR_ARR_SIZE];
-    int argSize = ((msgLength - 2 * CHAR_ARR_SIZE) / INT_SIZE) - 1;
+    int argSize = ((msgLength - 2 * CHAR_ARR_SIZE - UNSIGNED_SHORT_SIZE)/ INT_SIZE);
     int argTypes [argSize];
 
     memcpy(server, buffer, CHAR_ARR_SIZE);
-    memcpy(&port, buffer + CHAR_ARR_SIZE, INT_SIZE);
-    memcpy(funcName, buffer + CHAR_ARR_SIZE + INT_SIZE, CHAR_ARR_SIZE);
-    memcpy(argTypes, buffer + 2 * CHAR_ARR_SIZE + INT_SIZE, argSize);
+    memcpy(&port, buffer + CHAR_ARR_SIZE, UNSIGNED_SHORT_SIZE);
+    memcpy(funcName, buffer + CHAR_ARR_SIZE + UNSIGNED_SHORT_SIZE, CHAR_ARR_SIZE);
+    memcpy(argTypes, buffer + 2 * CHAR_ARR_SIZE + UNSIGNED_SHORT_SIZE, argSize * INT_SIZE);
+    
+    std::cout << "server: " << server << std::endl;
+    std::cout << "port: " << port << std::endl;
+    std::cout << "funcName: " << funcName << std::endl;
+    std::cout << "argSize: " << argSize << std::endl;
+    for(int i = 0; i < argSize; i++)
+    {
+        std::cout << "argTypes: " << argTypes[i] << std::endl;
+    }
 
     std::string name(funcName);
     std::string serverId(server);
+    
+    std::cout << "done" << std::endl;
 
     status = registerFunc(name, argTypes, argSize, serverId, port, clientSocketFd);
+    std::cout << "done1" << std::endl;
     if (status == 1) {
         reason = FUNCTION_OVERRIDDEN;
     } else {
         reason = REQUEST_SUCCESS;
     }
     memcpy(responseMsg, &reason, INT_SIZE);
+    std::cout << "done3" << std::endl;
     sendMessage(clientSocketFd, 3 * INT_SIZE, REGISTER_SUCCESS, responseMsg);
+    std::cout << "done4" << std::endl;
 }
 
 ServerLoc *lookupAvailableServer(std::string name, int *argTypes, int argSize) {
@@ -209,7 +224,9 @@ void handleTerminateRequest() {
 void removeServer(int closingSocketFd) {
     for (int i = 0; i < serverQueue.size(); i++) {
         if (serverQueue[i]->socketFd == closingSocketFd) {
+            std::cout << "deleting server from queue" << std::endl;
             delete serverQueue[i];
+            std::cout << "deleted server from queue" << std::endl;
             serverQueue.erase(serverQueue.begin() + i);
         }
     }
@@ -217,7 +234,10 @@ void removeServer(int closingSocketFd) {
         std::vector<ServerLoc *> servers = it->second;
         for (std::vector<ServerLoc *>::iterator it2 = servers.begin(); it2 != servers.end(); it2++) {
             if (closingSocketFd == (*it2)->socketFd) {
+                // TODO: check this fker out
+                std::cout << "deleting from map" << std::endl;
                 delete *it2;
+                std::cout << "deleted from map" << std::endl;
                 servers.erase(it2);
                 break;
             }
