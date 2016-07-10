@@ -108,7 +108,7 @@ void handleRegisterRequest(int clientSocketFd, int msgLength) {
         // corrupt message
         reason = MESSAGE_CORRUPTED;
         memcpy(responseMsg, &reason, INT_SIZE);
-        sendMessage(clientSocketFd, 3 * INT_SIZE, REGISTER_SUCCESS, responseMsg);
+        sendMessage(clientSocketFd, 3 * INT_SIZE, REGISTER_FAILURE, responseMsg);
         return;
     }
 
@@ -191,7 +191,7 @@ void handleLocationRequest(int clientSocketFd, int msgLength) {
     }
 
     char funcName[CHAR_ARR_SIZE];
-    int argSize = ((msgLength - 2 * CHAR_ARR_SIZE) / INT_SIZE) - 1;
+    int argSize = ((msgLength - 2 * CHAR_ARR_SIZE - UNSIGNED_SHORT_SIZE) / INT_SIZE);
     int argTypes [argSize];
 
     memcpy(funcName, buffer, CHAR_ARR_SIZE);
@@ -211,8 +211,8 @@ void handleLocationRequest(int clientSocketFd, int msgLength) {
     } else {
         char responseMsg [CHAR_ARR_SIZE + INT_SIZE];
         memcpy(responseMsg, availServer->serverId.c_str(), CHAR_ARR_SIZE);
-        memcpy(responseMsg + CHAR_ARR_SIZE, &(availServer->port), INT_SIZE);
-        sendMessage(clientSocketFd, 2 * INT_SIZE + CHAR_ARR_SIZE, LOC_SUCCESS, responseMsg);
+        memcpy(responseMsg + CHAR_ARR_SIZE, &(availServer->port), UNSIGNED_SHORT_SIZE);
+        sendMessage(clientSocketFd, 2 * INT_SIZE + CHAR_ARR_SIZE + UNSIGNED_SHORT_SIZE, LOC_SUCCESS, responseMsg);
     }
 }
 
@@ -227,13 +227,12 @@ void handleTerminateRequest() {
 void removeServer(int closingSocketFd) {
     for (int i = 0; i < serverQueue.size(); i++) {
         if (serverQueue[i]->socketFd == closingSocketFd) {
-            std::cout << "deleting server from queue" << std::endl;
             delete serverQueue[i];
-            std::cout << "deleted server from queue" << std::endl;
             serverQueue.erase(serverQueue.begin() + i);
         }
     }
     
+    /*
     std::cout << "queue size: " << serverQueue.size() << std::endl;
     for (std::map<FuncSignature *, std::vector<ServerLoc *> >::iterator it = funcDict.begin(); it != funcDict.end(); it++) {
         std::cout << "function: " << it->first->name << std::endl;
@@ -241,27 +240,23 @@ void removeServer(int closingSocketFd) {
         for (std::vector<ServerLoc *>::iterator it2 = servers.begin(); it2 != servers.end(); it2++) {
             std::cout << "server host: " << (*it2)->serverId << "port: " << (*it2)->port << std::endl;
             if (closingSocketFd == (*it2)->socketFd) {
-                // TODO: check this fker out
                 std::cout << "delete this fucker" << std::endl;
             }
         }
         std::cout << "vector size: " << servers.size() << std::endl;
     }
+    */
     
     for (std::map<FuncSignature *, std::vector<ServerLoc *> >::iterator it = funcDict.begin(); it != funcDict.end(); it++) {
         for (std::vector<ServerLoc *>::iterator it2 = it->second.begin(); it2 != it->second.end();) {
             if (closingSocketFd == (*it2)->socketFd) {
-                // TODO: check this fker out
-                std::cout << "deleting from map" << std::endl;
                 delete *it2;
-                std::cout << "deleted from map" << std::endl;
                 it2 = it->second.erase(it2);
                 break;
             } else {
                 it2++;
             }
         }
-        std::cout << "vector size: " << it->second.size() << std::endl;
     }
 
 }
@@ -312,9 +307,9 @@ void handleRequest(int clientSocketFd, fd_set *masterFds) {
     }
 
     if (msgType == REGISTER) {
-        handleRegisterRequest(clientSocketFd, msgLength - 2*INT_BYTE_PADDING);
+        handleRegisterRequest(clientSocketFd, msgLength - 2 * INT_SIZE);
     } else if (msgType == LOC_REQUEST) {
-        handleLocationRequest(clientSocketFd, msgLength - 2*INT_BYTE_PADDING);
+        handleLocationRequest(clientSocketFd, msgLength - 2 * INT_SIZE);
     } else if (msgType == TERMINATE) {
         handleTerminateRequest();
     }

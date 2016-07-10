@@ -14,7 +14,7 @@ int sendMessage(int socket_fd, unsigned int data_len, MessageType msg_type, char
     // Send the length
     send(socket_fd, &data_len, sizeof(int), 0);
     send(socket_fd, &msg_type, sizeof(MessageType), 0);
-    send(socket_fd, msg_data, data_len - 8, 0);
+    send(socket_fd, msg_data, data_len - sizeof(int) - sizeof(MessageType), 0);
     return SUCCESS;
 }
 
