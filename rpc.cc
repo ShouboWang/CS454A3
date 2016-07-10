@@ -10,6 +10,7 @@
 #include <string>
 #include <sys/types.h>
 #include <sys/socket.h>
+#include <sys/select.h>
 #include <netinet/in.h>
 #include <netdb.h>
 #include <arpa/inet.h>
@@ -102,7 +103,7 @@ int socket_connect(char* host_name, char* port_num)
      
      // Get the address info of binder
      memset(&hints, 0, sizeof hints);
-     hints.ai_family = AF_UNSPEC;
+     hints.ai_family = AF_INET;
      hints.ai_socktype = SOCK_STREAM;
      getaddrinfo(host_name, port_num, &hints, &ai);
      
@@ -151,7 +152,7 @@ int connect_binder()
 
     // Get the address info of binder
     memset(&binder_hints, 0, sizeof binder_hints);
-    binder_hints.ai_family = AF_UNSPEC;
+    binder_hints.ai_family = AF_INET;
     binder_hints.ai_socktype = SOCK_STREAM;
     getaddrinfo(binder_address, binder_port, &binder_hints, &binder_ai);
 
