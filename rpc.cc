@@ -330,6 +330,7 @@ int rpcInit()
 // Called by client
 int rpcCall(char* name, int* argTypes, void** args)
 {
+    std::cout << "rpcCall: " << std::endl;
 	// Connect to binder
 	// Get Binder's address & port
 	char* binder_address = getenv(BINDER_ADDRESS_S);
@@ -342,6 +343,7 @@ int rpcCall(char* name, int* argTypes, void** args)
 		return CALL_BINDER_PORT_NOT_FOUND;
 
 	int binder = socket_connect(binder_address, binder_port);
+    std::cout << "sending msg_length: " << binder << std::endl;
 
 	// Make the msg
 	// string(name'\0')int(argTypes)
@@ -351,29 +353,48 @@ int rpcCall(char* name, int* argTypes, void** args)
 
     // length, LOC_REQUEST, name, argTypes
 	int msg_length = sizeof(int) + sizeof(MessageType) + DEFAULT_CHAR_ARR_SIZE + arg_types_length * sizeof(int);
-
+    
 	// Sent the length & type
 	send(binder, &msg_length, sizeof(int), 0);
+    std::cout << "sending msg_length: " << msg_length << std::endl;
+    
     int msg_type = LOC_REQUEST;
 	send(binder, &msg_type, sizeof(MessageType), 0);
+    std::cout << "sending msg_type: " << msg_type << std::endl;
 
 	// Send the msg
 	send(binder, name, DEFAULT_CHAR_ARR_SIZE, 0);
+    std::cout << "sending name: " << name << std::endl;
+    
 	send(binder, argTypes, arg_types_length * sizeof(int), 0);
+    for(int i = 0; i < arg_types_length; i++)
+    {
+        std::cout << "sending argTypes: " << argTypes[i] << std::endl;
+    }
 
 	// Recieve the response type
+    // Response format:
+    // length, LOC_SUCCESS, server_identifier, port
+    int recv_length;
+    recv(binder, &recv_length, sizeof(int), 0);
+    std::cout << "receved recv_length: " << recv_length << std::endl;
+    
 	int res_type;
 	recv(binder, &res_type, sizeof(MessageType), 0);
+    std::cout << "receved res_type: " << res_type << std::endl;
 
 	char server_address[DEFAULT_CHAR_ARR_SIZE];
-	char server_port[DEFAULT_CHAR_ARR_SIZE];
+	unsigned short server_port;
 	if(res_type == LOC_SUCCESS)
 	{
 		// successful response, get the address and port
 		recv(binder, server_address, DEFAULT_CHAR_ARR_SIZE, 0);
-		recv(binder, server_port, DEFAULT_CHAR_ARR_SIZE, 0);
+        std::cout << "receved server_address: " << server_address << std::endl;
+		recv(binder, &server_port, UNSIGNED_SHORT_SIZE, 0);
+        std::cout << "receved server_port: " << server_port << std::endl;
 	} else if (res_type == LOC_FAILURE)
 	{
+        std::cout << "error" << server_port << std::endl;
 		// If failure, get the reason code and return it
 		int reason;
 		recv(binder, &reason, sizeof(int), 0);
@@ -387,7 +408,10 @@ int rpcCall(char* name, int* argTypes, void** args)
 
 	// sent to server and to EXECUTE
 	// Connection
-	int server_fd = socket_connect(server_address, server_port);
+    char char_port[2];
+    char_port[0] = server_port & 0xff;
+    char_port[1] = (server_port >> 8) & 0xff;
+	int server_fd = socket_connect(server_address, char_port);
 
 	// Get the size
 	int arg_size = 0;
@@ -560,53 +584,25 @@ int rpcRegister(char* name, int* argTypes, skeleton f)
 
 int rpcExecute()
 {
+    std::cout << "=================" << std::endl;
+    std::cout << "rpcExecute" << std::endl;
 
     fd_set master;      // Master file descriptor
     fd_set read_fds;    // Temp file descriptor
     int fdmax;          // Max number of file descirptors
 
-    int listener;       // Port listener
     struct sockaddr_storage remoteaddr; // connector's address information
     socklen_t addrlen;                  // Address length
-
-    struct addrinfo hints, *ai;     // Address info
-    int rv;             // Result from getaddressinfo
-    int ONE = 1;
 
     // clear the master and temp sets
     FD_ZERO(&master);
     FD_ZERO(&read_fds);
-
-    // Set the address info
-    memset(&hints, 0, sizeof hints);
-    hints.ai_family = AF_UNSPEC;
-    hints.ai_socktype = SOCK_STREAM;
-    hints.ai_flags = AI_PASSIVE; // use my IP
-
-    // Get address info
-    if ((rv = getaddrinfo(NULL, "0", &hints, &ai)) != 0)
-        return EXECUTE_ADDRINFO_ERROR;
-
-
-    listener = socket(ai->ai_family, ai->ai_socktype, ai->ai_protocol);
-    if(listener < 0)
-        return EXECUTE_SOCKET_OPEN_FAILURE;
-
-    setsockopt(listener, SOL_SOCKET, SO_REUSEADDR, &ONE, sizeof(int));
-    if(bind(listener, ai->ai_addr, ai->ai_addrlen) < 0)
-        return EXECUTE_SOCKET_BIND_FAILURE;
-
-    // Address info is no longer needed
-    freeaddrinfo(ai);
-
-    // Allow 5 connections from client
-    listen(listener, RPC_BACKLOG);
-
+    
     // add the listener to the master set
-    FD_SET(listener, &master);
+    FD_SET(rpc_sock_fd, &master);
 
     // keep track of the biggest file descriptor
-    fdmax = listener;
+    fdmax = rpc_sock_fd;
 
     pthread_t terminate_listener;
 
@@ -627,11 +623,12 @@ int rpcExecute()
         {
             if (FD_ISSET(index, &read_fds))
                 {
-                    if (index == listener)
+                    if (index == rpc_sock_fd)
                     {
                         // New connection
+                        std::cout << "new client connection" << std::endl;
                         addrlen = sizeof remoteaddr;
-                        int newfd = accept(listener, (struct sockaddr *)&remoteaddr, &addrlen);
+                        int newfd = accept(rpc_sock_fd, (struct sockaddr *)&remoteaddr, &addrlen);
                             FD_SET(newfd, &master);     // Add new address to master
                             if (newfd > fdmax)         // keep track of the max
                                 fdmax = newfd;
@@ -639,7 +636,6 @@ int rpcExecute()
                     // Create a new thread to handle the client's request so that it
                     // wont be blocking
                     pthread_t client_thread;
-                    alt_thread_count(1);
                     pthread_create(&client_thread, NULL, client_request_handler, (void*) &index);
                 }
             }
