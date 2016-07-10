@@ -1,6 +1,6 @@
 CC=g++
-CFLAGS1 = -o0 -g -Wall -Wl, -pthread
-CFLAGS2 = -w -g -c
+CFLAGS1 = -o0 -g -Wall -pthread
+CFLAGS2 = -w -g -c -std=c++11
 
 all: binder
 
@@ -14,7 +14,7 @@ message: message.cc
 	$(CC) $(CFLAGS1) message.cc -o message.o
 
 binder: binder.o rpc.o message.o
-	$(CC) $(CFLAGS1) binder.o message.o librpc.a -o binder.o
+	$(CC) $(CFLAGS1) binder.o message.o librpc.a -o binder
 
 client.o: client1.c
 	$(CC) $(CFLAGS2) client1.c -o client.o

@@ -2,6 +2,7 @@
 #include <iostream>
 #include <sys/types.h>
 #include <sys/socket.h>
+#include <sys/select.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
 #include <stdlib.h>
@@ -312,7 +313,8 @@ int main() {
         return 1;
     }
 
-    bzero((char*) &svrAddr, sizeof(svrAddr));
+    //bzero((char*) &svrAddr, sizeof(svrAddr));
+    memset((char*) &svrAddr, 0, sizeof(svrAddr));
 
     svrAddr.sin_family = AF_INET;
     svrAddr.sin_addr.s_addr = htons(INADDR_ANY);
