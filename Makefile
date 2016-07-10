@@ -1,6 +1,6 @@
 CC=g++
 CFLAGS1 = -o0 -g -Wall -pthread
-CFLAGS2 = -w -g -c -std=c++11
+CFLAGS2 = -w -g -c -std=c++11 -pthread
 
 all: binder
 
