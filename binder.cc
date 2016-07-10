@@ -83,7 +83,9 @@ int registerFunc(std::string name, int* argTypes, int argSize, std::string serve
                     return 1;
                 }
             }
+            std::cout << "size before: " << it->second.size() << std::endl;
             it->second.push_back(location);
+            std::cout << "size: " << it->second.size() << std::endl;
         }
     }
 
@@ -231,22 +233,41 @@ void removeServer(int closingSocketFd) {
             serverQueue.erase(serverQueue.begin() + i);
         }
     }
+    
+    std::cout << "queue size: " << serverQueue.size() << std::endl;
     for (std::map<FuncSignature *, std::vector<ServerLoc *> >::iterator it = funcDict.begin(); it != funcDict.end(); it++) {
+        std::cout << "function: " << it->first->name << std::endl;
         std::vector<ServerLoc *> servers = it->second;
         for (std::vector<ServerLoc *>::iterator it2 = servers.begin(); it2 != servers.end(); it2++) {
+            std::cout << "server host: " << (*it2)->serverId << "port: " << (*it2)->port << std::endl;
+            if (closingSocketFd == (*it2)->socketFd) {
+                // TODO: check this fker out
+                std::cout << "delete this fucker" << std::endl;
+            }
+        }
+        std::cout << "vector size: " << servers.size() << std::endl;
+    }
+    
+    for (std::map<FuncSignature *, std::vector<ServerLoc *> >::iterator it = funcDict.begin(); it != funcDict.end(); it++) {
+        for (std::vector<ServerLoc *>::iterator it2 = it->second.begin(); it2 != it->second.end();) {
             if (closingSocketFd == (*it2)->socketFd) {
                 // TODO: check this fker out
                 std::cout << "deleting from map" << std::endl;
                 delete *it2;
                 std::cout << "deleted from map" << std::endl;
-                servers.erase(it2);
+                it2 = it->second.erase(it2);
                 break;
+            } else {
+                it2++;
             }
         }
+        std::cout << "vector size: " << it->second.size() << std::endl;
     }
+
 }
 
 void cleanup() {
+    std::cout << "cleaning" << std::endl;
     for (int i = 0; i < serverQueue.size(); i++) {
         delete serverQueue[i];
     }
