@@ -239,6 +239,7 @@ void handleLocationRequest(int clientSocketFd, int msgLength) {
 void handleTerminateRequest() {
     // terminate and clean up
     for (int i = 0; i < serverQueue.size(); i++) {
+        std::cout << "send terminate to you fkers" << std::endl;
         sendMessage(serverQueue[i]->socketFd, 2 * INT_SIZE, TERMINATE, NULL);
     }
     terminating = true;
@@ -307,7 +308,9 @@ void handleRequest(int clientSocketFd, fd_set *masterFds) {
         close(clientSocketFd);
         FD_CLR(clientSocketFd, masterFds);
         removeServer(clientSocketFd);
+        std::cout << "removing server" << std::endl;
         if (serverQueue.size() == 0 && terminating) {
+            std::cout << "lets clean up" << std::endl;
             cleanup();
             exit(0);
         }
@@ -319,7 +322,9 @@ void handleRequest(int clientSocketFd, fd_set *masterFds) {
         close(clientSocketFd);
         FD_CLR(clientSocketFd, masterFds);
         removeServer(clientSocketFd);
+        std::cout << "removing server" << std::endl;
         if (serverQueue.size() == 0 && terminating) {
+            std::cout << "shouldn't hit here" << std::endl;
             cleanup();
             exit(0);
         }
@@ -331,7 +336,10 @@ void handleRequest(int clientSocketFd, fd_set *masterFds) {
     } else if (msgType == LOC_REQUEST) {
         handleLocationRequest(clientSocketFd, msgLength - 2 * INT_SIZE);
     } else if (msgType == TERMINATE) {
+        std::cout << "terminate?" << std::endl;
         handleTerminateRequest();
+    } else {
+        std::cout << "wtf is this shit man" << std::endl;
     }
 }
 

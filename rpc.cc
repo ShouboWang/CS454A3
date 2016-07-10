@@ -187,13 +187,18 @@ void* wait_terminate(void* arg)
     // Format TERMINATE
     for(;;){
         int msg_type;
+        std::cout << "terminare message sdasdasd" << std::endl;
         recv(binder_socket_fd, &msg_type, sizeof(MessageType), 0);
         if(msg_type == TERMINATE)
         {
+            std::cout << "terminare message reced" << std::endl;
             terminate = true;
-            pthread_exit(NULL);
+            break;
         }
     }
+    std::cout << "exit terminate" << std::endl;
+    close(rpc_sock_fd);
+    pthread_exit(NULL);
     return 0;
 }
 
@@ -207,31 +212,35 @@ void* client_request_handler(void* arg)
     std::cout << "client_fd: " << client_fd<<std::endl;
     int msg_type;
     int msg_length;
-    char function_name[DEFAULT_CHAR_ARR_SIZE];
 
-    recv(client_fd, &msg_length, sizeof(int), 0);
+    int len = recv(client_fd, &msg_length, sizeof(int), 0);
     std::cout << "msg_length: " << msg_length<<std::endl;
-    recv(client_fd, &msg_type, sizeof(MessageType), 0);
+    std::cout << "len: " << len <<std::endl;
+    len = recv(client_fd, &msg_type, sizeof(MessageType), 0);
     std::cout << "msg_type: " << msg_type<<std::endl;
+    std::cout << "len: " << len <<std::endl;
 
     
     int arg_type_length;
-    recv(client_fd, &arg_type_length, sizeof(int), 0);
+    len = recv(client_fd, &arg_type_length, sizeof(int), 0);
     std::cout << "arg_type_length: " << arg_type_length<<std::endl;
+    std::cout << "len: " << len <<std::endl;
     
-    // length EXECUTE, name, argTypes, args
-    char buffer[msg_length - 3 * sizeof(int)];
-    std::cout << "waiting for: " <<( msg_length - 2 * sizeof(int) )<<std::endl;
-    recv(client_fd, buffer, msg_length - 2 * sizeof(int), 0);
+    // length EXECUTE, ARGLENGTH, name, argTypes, args
+    char *buffer = new char[msg_length - 3 * sizeof(int)];
+    std::cout << "waiting for: " <<( msg_length - 3 * sizeof(int) )<<std::endl;
+    len = recv(client_fd, buffer, msg_length - 3 * sizeof(int), MSG_WAITALL);
+    std::cout << "len: " << len <<std::endl;
     std::cout << "recieve done: " << std::endl;
     
-    char funcName[CHAR_ARR_SIZE];
-    int arg_size_tot = msg_length - DEFAULT_CHAR_ARR_SIZE;
+    char *funcName = new char[CHAR_ARR_SIZE];
+    int arg_size_tot = msg_length - 3 * sizeof(int) - DEFAULT_CHAR_ARR_SIZE;
+    std::cout << "arg_size_tot: " << arg_size_tot<<std::endl;
     int *client_args = (int*) malloc(arg_size_tot);
 
-    memcpy(funcName, buffer, CHAR_ARR_SIZE);
+    memcpy(funcName, buffer, DEFAULT_CHAR_ARR_SIZE);
     std::cout << "function_name: " << funcName<<std::endl;
-    memcpy(client_args, buffer + CHAR_ARR_SIZE, arg_size_tot);
+    memcpy(client_args, buffer + DEFAULT_CHAR_ARR_SIZE, arg_size_tot);
     std::cout << "client_args: " << client_args<<std::endl;
     
     
@@ -250,8 +259,18 @@ void* client_request_handler(void* arg)
         std::cout << "arg_types: " << arg_types[i]<<std::endl;
     }
     
+    // client_args
+    // TYPE TYPE TYPE *arg0 *arg1 *arg2
+    
     void** args = (void**) malloc(arg_type_length * sizeof(void*));
     void* args_index = client_args + arg_type_length;
+    std::cout << "args_index" << args_index << std::endl;
+    
+    
+    std::cout << "============" << std::endl;
+    std::cout << *(int *)args_index << std::endl;
+    std::cout << *((int *)args_index + 1) << std::endl;
+    std::cout << *((int *)args_index + 2) << std::endl;
 
     for (int index = 0; index < arg_type_length; index++)
     {
@@ -265,12 +284,16 @@ void* client_request_handler(void* arg)
         std::cout << "arr_size: " << arr_size <<std::endl;
 
         void* holder = (void*) malloc(arr_size * arg_type_size);
-        args[index] = holder;
+        std::cout << "holder: " << holder << std::endl;
+        *(args + index) = holder;
         for (int i = 0; i < arr_size; i++)
         {
             void* temp = (char*) holder + i * arg_type_size;
+            std::cout << "temp: " << temp << std::endl;
             memcpy(temp, args_index, arg_type_size);
+            std::cout << "*temp: " << *(int *)temp << std::endl;
             args_index = (void*) ((char*) args_index + arg_type_size);
+            std::cout << "args_index: " << args_index << std::endl;
         }
     }
     
@@ -313,7 +336,7 @@ void* client_request_handler(void* arg)
         send(client_fd, &msg_length, sizeof(int), 0);
         send(client_fd, &ret_msg_type, sizeof(MessageType), 0);
         send(client_fd, &arg_type_length, sizeof(int), 0);
-        send(client_fd, function_name, DEFAULT_CHAR_ARR_SIZE, 0);
+        send(client_fd, funcName, DEFAULT_CHAR_ARR_SIZE, 0);
         send(client_fd, arg_types, arg_type_length * 4, 0);
 
         for(int arg = 0; arg < arg_type_length; arg++)
@@ -329,7 +352,7 @@ void* client_request_handler(void* arg)
         std::cout << "not success" << std::endl;
         // EXECUTE_FAILURE, reasonCode
         int ret_msg_type = EXECUTE_FAILURE;
-        int ret_msg_length = sizeof(int);
+        int ret_msg_length = 12;
         send(client_fd, &ret_msg_length, sizeof(int), 0);
         send(client_fd, &ret_msg_type, sizeof(MessageType), 0);
         send(client_fd, &result, sizeof(int), 0);
@@ -398,19 +421,21 @@ int rpcInit()
 int rpcCall(char* name, int* argTypes, void** args)
 {
     std::cout << "rpcCall: " << std::endl;
-	// Connect to binder
-	// Get Binder's address & port
-	char* binder_address = getenv(BINDER_ADDRESS_S);
-	char* binder_port = getenv(BINDER_PORT_S);
+    // Connect to binder
+    // Get Binder's address & port
+    if(binder_socket_fd <= 0){
+        char* binder_address = getenv(BINDER_ADDRESS_S);
+        char* binder_port = getenv(BINDER_PORT_S);
 
-	// Validates that the address and port is set
-	if(binder_address == NULL)
-		return CALL_BINDER_ADDRESS_NOT_FOUND;
-	else if(binder_port == NULL)
-		return CALL_BINDER_PORT_NOT_FOUND;
+        // Validates that the address and port is set
+        if(binder_address == NULL)
+            return CALL_BINDER_ADDRESS_NOT_FOUND;
+        else if(binder_port == NULL)
+            return CALL_BINDER_PORT_NOT_FOUND;
 
-	int binder = socket_connect(binder_address, binder_port);
-    std::cout << "binder: " << binder << std::endl;
+        binder_socket_fd = socket_connect(binder_address, binder_port);
+    }
+    std::cout << "binder: " << binder_socket_fd << std::endl;
 
 	// Make the msg
 	// string(name'\0')int(argTypes)
@@ -422,18 +447,18 @@ int rpcCall(char* name, int* argTypes, void** args)
 	int msg_length = sizeof(int) + sizeof(MessageType) + DEFAULT_CHAR_ARR_SIZE + arg_types_length * sizeof(int);
 
 	// Sent the length & type
-	send(binder, &msg_length, sizeof(int), 0);
+	send(binder_socket_fd, &msg_length, sizeof(int), 0);
     std::cout << "sending msg_length: " << msg_length << std::endl;
 
     int msg_type = LOC_REQUEST;
-	send(binder, &msg_type, sizeof(MessageType), 0);
+	send(binder_socket_fd, &msg_type, sizeof(MessageType), 0);
     std::cout << "sending msg_type: " << msg_type << std::endl;
 
 	// Send the msg
-	send(binder, name, DEFAULT_CHAR_ARR_SIZE, 0);
+	send(binder_socket_fd, name, DEFAULT_CHAR_ARR_SIZE, 0);
     std::cout << "sending name: " << name << std::endl;
 
-	send(binder, argTypes, arg_types_length * sizeof(int), 0);
+	send(binder_socket_fd, argTypes, arg_types_length * sizeof(int), 0);
     for(int i = 0; i < arg_types_length; i++)
     {
         std::cout << "sending argTypes: " << argTypes[i] << std::endl;
@@ -443,11 +468,11 @@ int rpcCall(char* name, int* argTypes, void** args)
     // Response format:
     // length, LOC_SUCCESS, server_identifier, port
     int recv_length;
-    recv(binder, &recv_length, sizeof(int), 0);
+    recv(binder_socket_fd, &recv_length, sizeof(int), 0);
     std::cout << "receved recv_length: " << recv_length << std::endl;
 
 	int res_type;
-	recv(binder, &res_type, sizeof(MessageType), 0);
+	recv(binder_socket_fd, &res_type, sizeof(MessageType), 0);
     std::cout << "receved res_type: " << res_type << std::endl;
 
 	char server_address[DEFAULT_CHAR_ARR_SIZE];
@@ -455,21 +480,19 @@ int rpcCall(char* name, int* argTypes, void** args)
 	if(res_type == LOC_SUCCESS)
 	{
 		// successful response, get the address and port
-		recv(binder, server_address, DEFAULT_CHAR_ARR_SIZE, 0);
+		recv(binder_socket_fd, server_address, DEFAULT_CHAR_ARR_SIZE, 0);
         std::cout << "receved server_address: " << server_address << std::endl;
-		recv(binder, &server_port, UNSIGNED_SHORT_SIZE, 0);
+		recv(binder_socket_fd, &server_port, UNSIGNED_SHORT_SIZE, 0);
         std::cout << "receved server_port: " << server_port << std::endl;
 	} else if (res_type == LOC_FAILURE)
 	{
         std::cout << "error" << server_port << std::endl;
 		// If failure, get the reason code and return it
 		int reason;
-		recv(binder, &reason, sizeof(int), 0);
-		close(binder);
+		recv(binder_socket_fd, &reason, sizeof(int), 0);
 		return reason;
 	} else
 	{
-		close(binder);
 		return UNKNOW_MSG_TYPE_RESPONSE;
 	}
 
@@ -518,8 +541,8 @@ int rpcCall(char* name, int* argTypes, void** args)
     {
         std::cout << "sending argTypes: " << argTypes[i] << std::endl;
     }
+    
 
-	// Send each arg
 	for(int arg = 0; arg < arg_types_length; arg++)
 	{
 		int arg_type = get_arg_type(&argTypes[arg]);
@@ -539,13 +562,13 @@ int rpcCall(char* name, int* argTypes, void** args)
     int recv_msg_arg_length;
 	recv(server_fd, &recv_msg_length, sizeof(int), 0);
 	recv(server_fd, &recv_msg_type, sizeof(MessageType), 0);
-	recv(server_fd, &recv_msg_arg_length, sizeof(int), 0);
     std::cout << "recv_msg_length: " << recv_msg_length << std::endl;
     std::cout << "recv_msg_type: " << recv_msg_type << std::endl;
-    std::cout << "recv_msg_arg_length: " << recv_msg_arg_length << std::endl;
 
 	if(recv_msg_type == EXECUTE_SUCCESS)
 	{
+        recv(server_fd, &recv_msg_arg_length, sizeof(int), 0);
+        std::cout << "recv_msg_arg_length: " << recv_msg_arg_length << std::endl;
 		char buffer[recv_msg_length - 3*sizeof(int)];
         std::cout << "recv_msg_length - 3*sizeof(int): " << recv_msg_length - 3*sizeof(int) << std::endl;
 		recv(server_fd, buffer, recv_msg_length - 3 * sizeof(int), 0);
@@ -593,14 +616,16 @@ int rpcCall(char* name, int* argTypes, void** args)
         {
             std::cout << "final arg" << arg << ": " << *(int *)args[arg] << std::endl;
         }
+        close(server_fd);
         
         
 	} else if (recv_msg_type == EXECUTE_FAILURE)
 	{
-			int reasonCode;
-			recv(server_fd, &reasonCode, sizeof(int), 0);
-			close(server_fd);
-			return reasonCode;
+        int reasonCode;
+        recv(server_fd, &reasonCode, sizeof(int), 0);
+        std::cout << "reasonCode: " << reasonCode << std::endl;
+        close(server_fd);
+        return reasonCode;
 	} else
 	{
 		close(server_fd);
@@ -745,64 +770,33 @@ int rpcExecute()
         pthread_create(&client_thread, NULL, client_request_handler, (void*) &newfd);
         
     }
-
-    /*// Server main loop
-    while(!terminate) {
-        // copy master
-        read_fds = master;
-        if (select(fdmax+1, &read_fds, NULL, NULL, NULL) < 0)
-            return EXECUTE_SELECTION_FAILURE;
-
-        // Iterate through the connectons
-        for(int index = 0; index < fdmax+1; index++)
-        {
-            if (FD_ISSET(index, &read_fds))
-                {
-                    if (index == rpc_sock_fd)
-                    {
-                        // New connection
-                        std::cout << "new client connection" << std::endl;
-                        addrlen = sizeof remoteaddr;
-                        int newfd = accept(rpc_sock_fd, (struct sockaddr *)&remoteaddr, &addrlen);
-                            FD_SET(newfd, &master);     // Add new address to master
-                            if (newfd > fdmax)         // keep track of the max
-                                fdmax = newfd;
-                } else {
-                    // Create a new thread to handle the client's request so that it
-                    // wont be blocking
-                    std::cout << "processing thread: " << std::endl;
-                    std::cout << "index: " << index<<std::endl;
-                    pthread_t client_thread;
-                    pthread_create(&client_thread, NULL, client_request_handler, (void*) &index);
-                }
-            }
-        }
-    }*/
-
+    
+    std::cout << "numof threads: " << thread_count << std::endl;
     while(thread_count < 0){}
 
-    int msg_type = REQUEST_SUCCESS;
-    send(binder_socket_fd, &msg_type, sizeof(MessageType), 0);
+    std::cout << "closing: " << thread_count << std::endl;
     close(binder_socket_fd);
 
-    return msg_type;
+    return SUCCESS;
 }
 
 int rpcTerminate()
 {
-    /*
+    std::cout << "in t" << std::endl;
 	// call binder to inform servcers to terminate
 	// if no binder is created, then return with warning
-	if(binder_socket_fd < 0)
+	if(binder_socket_fd <= 0)
 		return TERMINATE_BINDER_DID_NOT_INITIATE;
+    
+    std::cout << "wut" << std::endl;
 
 	// Sent terminate request to binder
-	char data[0];
-	int status = sendMessgae(binder_socket_fd, 0, MessageType.TERMINATE ,data);
+    int len = 8;
+    int msg_t = TERMINATE;
+    send(binder_socket_fd, &len, sizeof(int), 0);
+    send(binder_socket_fd, &msg_t, sizeof(MessageType), 0);
 
 	// Close binder socket
-	close(binder_socket_fd);
-	return status;
-     */
-	return 0;
+	//close(binder_socket_fd);
+	return SUCCESS;
 }
